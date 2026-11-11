@@ -62,7 +62,7 @@ The plugin adds a skill, so you can ask Claude to point a script at the credit o
 job ran:
 
 ```
-/plugin marketplace add lucas-saldanha-werneck/claude-plugins
+/plugin marketplace add lucas-saldanha-werneck/lucas-tools
 /plugin install api-credit@lucas-tools
 ```
 
