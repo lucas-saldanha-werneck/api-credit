@@ -113,7 +113,7 @@ bash "$CC" --credit-help | grep -q "^Usage:" && ok "--credit-help prints the usa
 
 echo "== install.sh and the shim"
 reset
-OUT=$(bash "$R/install.sh" --dry-run); [ ! -e "$HOME/.local/bin/claude-credito" ] && echo "$OUT" | grep -q "(dry-run)" && ok "--dry-run writes nothing" || bad "$OUT"
+OUT=$(bash "$R/install.sh" --dry-run); [ ! -e "$HOME/.local/bin/claude-credito" ] && echo "$OUT" | grep -q "(dry-run)" && ! echo "$OUT" | grep -qE "^(installed|wrote|Next)" && ok "--dry-run writes nothing and says so" || bad "$OUT"
 OUT=$(bash "$R/install.sh") || bad "install failed: $OUT"
 [ -x "$HOME/.local/bin/claude-credito" ] && [ -x "$HOME/.local/share/claude-credito/shim/claude" ] && ok "installs the tool and the shim" || bad "$OUT"
 cmp -s "$R/config.example" "$HOME/.config/claude-credito/config" && ok "starter config written" || bad "no starter config"
