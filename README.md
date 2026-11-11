@@ -63,7 +63,7 @@ job ran:
 
 ```
 /plugin marketplace add lucas-saldanha-werneck/claude-plugins
-/plugin install api-credit@lucas-plugins
+/plugin install api-credit@lucas-tools
 ```
 
 The plugin is called `api-credit` because Claude Code reserves plugin names that start with
