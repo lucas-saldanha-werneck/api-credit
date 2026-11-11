@@ -1,6 +1,6 @@
 {
   "name": "api-credit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Runs claude -p scripts on your plan's monthly API credit first, and on the subscription when the API refuses.",
   "author": {
     "name": "Lucas Saldanha Werneck",

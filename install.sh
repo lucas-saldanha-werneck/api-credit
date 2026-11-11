@@ -36,13 +36,19 @@ if [ $UNINSTALL = 1 ]; then
 fi
 
 run mkdir -p "$BIN" "$SHARE/shim" "$(dirname "$CONF")"
-run cp "$R/bin/claude-credito" "$BIN/claude-credito" && run chmod 755 "$BIN/claude-credito" && echo "installed $BIN/claude-credito"
-# The shim runs the claude-credito installed above, wherever INSTALL_BIN_DIR put it.
+# Each file is written next to its place and then renamed over it: a job that is running the old
+# file right now keeps the old one (bash reads a script as it runs, so writing in place could break it).
 if [ $DRY = 1 ]; then
+  echo "(dry-run) write $BIN/claude-credito"
   echo "(dry-run) write $SHARE/shim/claude"
 else
-  sed "s|@CLAUDE_CREDITO@|$BIN/claude-credito|" "$R/shim/claude" > "$SHARE/shim/claude" && chmod 755 "$SHARE/shim/claude"
+  cp "$R/bin/claude-credito" "$BIN/.claude-credito.new.$$" && chmod 755 "$BIN/.claude-credito.new.$$" \
+    && mv -f "$BIN/.claude-credito.new.$$" "$BIN/claude-credito" || { echo "install.sh: could not write $BIN/claude-credito" >&2; exit 1; }
+  # The shim runs the claude-credito installed above, wherever INSTALL_BIN_DIR put it.
+  sed "s|@CLAUDE_CREDITO@|$BIN/claude-credito|" "$R/shim/claude" > "$SHARE/shim/.claude.new.$$" && chmod 755 "$SHARE/shim/.claude.new.$$" \
+    && mv -f "$SHARE/shim/.claude.new.$$" "$SHARE/shim/claude" || { echo "install.sh: could not write $SHARE/shim/claude" >&2; exit 1; }
 fi
+echo "installed $BIN/claude-credito"
 echo "installed $SHARE/shim/claude"
 if [ -e "$CONF" ]; then
   echo "kept your config: $CONF"

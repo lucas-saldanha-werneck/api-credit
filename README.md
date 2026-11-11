@@ -122,7 +122,7 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
 bash tests/run.sh
 ```
 
-39 checks with a fake `claude`, a fake HOME and no Keychain. They run on macOS and Linux in CI.
+40 checks with a fake `claude`, a fake HOME and no Keychain. They run on macOS and Linux in CI.
 
 ## Uninstall
 

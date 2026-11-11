@@ -32,7 +32,7 @@
 # PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
 
 set -u
-VERSION="0.1.0"
+VERSION="0.1.1"
 SELF="${BASH_SOURCE[0]}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
 CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"

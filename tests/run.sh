@@ -117,6 +117,8 @@ OUT=$(bash "$R/install.sh" --dry-run); [ ! -e "$HOME/.local/bin/claude-credito" 
 OUT=$(bash "$R/install.sh") || bad "install failed: $OUT"
 [ -x "$HOME/.local/bin/claude-credito" ] && [ -x "$HOME/.local/share/claude-credito/shim/claude" ] && ok "installs the tool and the shim" || bad "$OUT"
 cmp -s "$R/config.example" "$HOME/.config/claude-credito/config" && ok "starter config written" || bad "no starter config"
+I1=$(ls -i "$HOME/.local/bin/claude-credito" | cut -d' ' -f1); bash "$R/install.sh" >/dev/null; I2=$(ls -i "$HOME/.local/bin/claude-credito" | cut -d' ' -f1)
+[ "$I1" != "$I2" ] && [ -z "$(ls -A "$HOME/.local/bin" | grep -v '^claude-credito$')" ] && ok "a new install replaces the file by rename, and leaves no temporary file" || bad "inode $I1 -> $I2: $(ls -A "$HOME/.local/bin")"
 echo "CLAUDE_CREDITO_PAUSE_S=9" > "$HOME/.config/claude-credito/config"; bash "$R/install.sh" >/dev/null
 check "an existing config is never changed" "$(cat "$HOME/.config/claude-credito/config")" "CLAUDE_CREDITO_PAUSE_S=9"
 rm -f "$HOME/.config/claude-credito/config"
