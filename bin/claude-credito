@@ -91,7 +91,13 @@ stored_key() {
   printf '%s' "$k"
 }
 
-mtime() { /usr/bin/stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+# GNU stat first: on Linux `stat -f` means something else and prints text.
+mtime() {
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || m="$(stat -f %m "$1" 2>/dev/null)"
+  [[ "$m" =~ ^[0-9]+$ ]] || m=0
+  printf '%s' "$m"
+}
 paused() {
   [[ -f "$PAUSE" ]] || return 1
   if (( $(date +%s) - $(mtime "$PAUSE") >= PAUSE_S )); then rm -f "$PAUSE" 2>/dev/null; return 1; fi
