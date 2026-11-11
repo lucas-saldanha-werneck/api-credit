@@ -1,0 +1,4 @@
+config.example text eol=lf
+bin/claude-credito text eol=lf
+shim/claude text eol=lf
+*.sh text eol=lf

@@ -1,0 +1,20 @@
+{
+  "name": "api-credit",
+  "version": "0.1.0",
+  "description": "Runs claude -p scripts on your plan's monthly API credit first, and on the subscription when the API refuses.",
+  "author": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "homepage": "https://github.com/lucas-saldanha-werneck/api-credit",
+  "repository": "https://github.com/lucas-saldanha-werneck/api-credit",
+  "license": "MIT",
+  "keywords": [
+    "api",
+    "credit",
+    "headless",
+    "automation",
+    "scripts",
+    "billing"
+  ]
+}

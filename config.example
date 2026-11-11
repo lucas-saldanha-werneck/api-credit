@@ -1,0 +1,23 @@
+# claude-credito settings. Every line is commented out: this file changes nothing until you edit it.
+# A variable set in the environment wins over this file. Lines are KEY=VALUE; nothing here is executed,
+# except CLAUDE_CREDITO_KEY_COMMAND, which `claude-credito --credit-store-key` runs.
+
+# The claude to run. Default: the first `claude` on PATH that is not claude-credito.
+#CLAUDE_CREDITO_REAL=~/.local/bin/claude
+
+# Never use the API (everything runs on the subscription).
+#CLAUDE_CREDITO=off
+
+# Seconds to stay on the subscription after the API refuses a call. Default: 21600 (6 hours).
+#CLAUDE_CREDITO_PAUSE_S=21600
+
+# A command that prints the Console API key (for example from your password manager).
+# `claude-credito --credit-store-key` runs it instead of asking you to paste the key.
+#CLAUDE_CREDITO_KEY_COMMAND=
+
+# Do not use the macOS Keychain; keep the key in ~/.config/claude-credito/key (mode 600).
+#CLAUDE_CREDITO_KEYCHAIN=off
+
+# Log file and state folder.
+#CLAUDE_CREDITO_LOG=~/Library/Logs/claude-credito.log
+#CLAUDE_CREDITO_STATE=~/.local/state/claude-credito

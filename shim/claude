@@ -1,0 +1,5 @@
+#!/bin/bash
+# claude-credito shim: put this folder first on PATH and a script that calls a bare `claude`
+# goes through claude-credito (monthly API credit first, subscription when the API refuses).
+#   PATH="$HOME/.local/share/claude-credito/shim:$PATH" your-script
+exec "@CLAUDE_CREDITO@" "$@"

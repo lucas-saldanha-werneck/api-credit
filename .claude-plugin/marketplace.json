@@ -1,0 +1,15 @@
+{
+  "name": "api-credit",
+  "description": "Run claude -p scripts on the monthly API credit, with the subscription as the fallback.",
+  "owner": {
+    "name": "Lucas Saldanha Werneck",
+    "url": "https://github.com/lucas-saldanha-werneck"
+  },
+  "plugins": [
+    {
+      "name": "api-credit",
+      "source": "./",
+      "description": "Runs claude -p scripts on your plan's monthly API credit first, and on the subscription when the API refuses."
+    }
+  ]
+}
