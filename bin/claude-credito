@@ -36,7 +36,7 @@
 # PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
 
 set -u
-VERSION="0.1.6"
+VERSION="0.1.7"
 SELF="${BASH_SOURCE[0]}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
 CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"
@@ -233,16 +233,15 @@ wait_child() {
   return "$rc"
 }
 # stdin goes to claude through tee, which keeps the copy. claude itself decides when stdin is done (it
-# gives up on a pipe that stays silent), so an open stdin with no data does not hang the wrapper, and a
-# copy that could not be written whole (disk full) does not cut what claude gets.
-IN=/dev/null; COPY=/dev/null; copy_ok=1
+# gives up on a pipe that stays silent), so an open stdin with no data does not hang the wrapper, a
+# streaming stdin (--input-format stream-json) still streams, and a copy that could not be written whole
+# (disk full) does not cut what claude gets. tee feeds claude through an anonymous pipe, never a named
+# FIFO: claude (2.1.3xx) reading a named FIFO never sees its end and hangs.
+COPY=/dev/null; copy_ok=1; piped=0
 if [[ ! -t 0 ]]; then
-  mkfifo "$T/fifo" || exec "$REAL" "$@"
+  piped=1
   COPY="$T/in"; [[ -n "${CLAUDE_CREDITO_TEST_COPY_FAIL:-}" ]] && COPY="$T/no-such-dir/in"
   exec 3<&0
-  tee "$COPY" <&3 > "$T/fifo" 2>/dev/null & TEE=$!
-  exec 3<&-
-  IN="$T/fifo"
 fi
 
 # Output format, and whether the caller manages the session itself (then no session id of our own).
@@ -266,13 +265,27 @@ if [[ "$fmt" != json && "$fmt" != stream-json ]] && (( ! own_session )); then
 fi
 
 rc=0
-ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" < "$IN" > "$T/out" 2> "$T/err" &
-wait_child $! || rc=$?
-if [[ -n "$TEE" ]]; then
+if (( piped )); then
+  # Process substitution, not a pipeline: bash would wait for the whole pipeline (tee too, stuck on a
+  # silent stdin). tee writes its pid (to stop it) and, when it ends, its exit code. tee reads fd 3, not
+  # fd 0: dash points a background command's stdin at /dev/null before its own redirections.
+  ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" > "$T/out" 2> "$T/err" \
+    < <(sh -c 'tee "$2" <&3 3<&- 2>/dev/null & echo $! > "$1"; wait $!; echo $? > "$3"' sh "$T/tee.pid" "$COPY" "$T/tee.rc") 3<&- &
+  pid=$!
+  exec 3<&-
+  for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -s "$T/tee.pid" ]] && break; sleep 0.1; done
+  TEE="$(cat "$T/tee.pid" 2>/dev/null)"
+  wait_child "$pid" || rc=$?
   # tee is done once claude read to the end; if claude stopped before, tee waits on stdin: stop it.
-  kill "$TEE" 2>/dev/null; trc=0; wait "$TEE" 2>/dev/null || trc=$?; TEE=""
+  [[ -n "$TEE" ]] && kill "$TEE" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [[ -s "$T/tee.rc" ]] && break; sleep 0.1; done
+  TEE=""
+  trc="$(cat "$T/tee.rc" 2>/dev/null)"
   # 143 = stopped here (the copy holds what came before claude finished); any other error = copy not whole
-  (( trc == 0 || trc == 143 )) || copy_ok=0
+  [[ "$trc" == 0 || "$trc" == 143 ]] || copy_ok=0
+else
+  ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" < /dev/null > "$T/out" 2> "$T/err" &
+  wait_child $! || rc=$?
 fi
 
 # Did the API refuse (why), and is it proven that no turn ran (proven=1)?
