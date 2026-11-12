@@ -33,6 +33,14 @@ cat > "$W/fakebin/claude" <<'EOF'
 # assistant line with "isApiErrorMessage":true and a real turn is an assistant line with a real model;
 # with --output-format json/stream-json the result line has is_error and modelUsage ({} = no API call worked).
 # Like the real claude, FAKE_STDIN_GIVEUP gives up on a stdin that stays silent (here after 1 s).
+# Like the real claude (2.1.319 and 2.1.322 on macOS), a NAMED FIFO as stdin is read but its end is never
+# seen, so it hangs; an anonymous pipe is fine. Here: read it, wait 5 s, fail.
+named_fifo() {
+  [ -p /dev/stdin ] || return 1
+  if [ -e "/proc/$$/fd/0" ]; then case "$(readlink "/proc/$$/fd/0")" in /*) return 0 ;; esac; return 1; fi
+  PATH="$PATH:/usr/sbin:/sbin" lsof -a -p $$ -d 0 -Fn 2>/dev/null | grep -q '^n/'
+}
+if named_fifo; then cat > /dev/null; sleep 5; echo "fake claude: stuck on a named FIFO stdin" >&2; exit 99; fi
 if [ -n "${FAKE_STDIN_GIVEUP:-}" ]; then in=""; IFS= read -r -t 1 in || true; else in="$(cat)"; fi
 [ -n "${FAKE_SLEEP:-}" ] && { echo $$ > "$FAKE_DIR/pid"; exec sleep "$FAKE_SLEEP"; }
 echo "key=${ANTHROPIC_API_KEY:-none} stdin=[$in] args=$*" >> "$FAKE_DIR/calls"
@@ -194,6 +202,12 @@ start=$(date +%s)
 OUT=$(CLAUDE_CREDITO_KEY="$GOOD" FAKE_STDIN_GIVEUP=1 bash "$CC" -p x < "$W/silent" 2>/dev/null)
 el=$(( $(date +%s) - start )); kill $SP 2>/dev/null; wait $SP 2>/dev/null; rm -f "$W/silent"
 if [ $el -lt 6 ]; then check "AC-03: open silent stdin: the wrapper returns when claude does" "$OUT" "api-ok []"; else bad "AC-03: took ${el}s: $OUT"; fi
+reset
+# stdin with data reaches claude through an anonymous pipe, never a named FIFO (the real claude hangs on one)
+start=$(date +%s)
+OUT=$(printf 'question' | CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p --output-format json 2>/dev/null)
+el=$(( $(date +%s) - start ))
+if [ $el -lt 4 ]; then check "stdin with data: claude gets it on an anonymous pipe and answers" "$(calls)|$(cut -d' ' -f2 "$W/calls")" "1|stdin=[question]"; else bad "stdin with data: took ${el}s (claude got a named FIFO): $OUT"; fi
 reset
 # AC-04: when the copy of stdin cannot be kept whole, claude still gets all of it and a refusal is not repeated
 OUT=$(printf 'line1 line2' | CLAUDE_CREDITO_KEY="$LOW" CLAUDE_CREDITO_TEST_COPY_FAIL=1 bash "$CC" -p 2>/dev/null)
