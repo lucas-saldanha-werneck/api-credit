@@ -267,9 +267,10 @@ fi
 rc=0
 if (( piped )); then
   # Process substitution, not a pipeline: bash would wait for the whole pipeline (tee too, stuck on a
-  # silent stdin). tee writes its pid (to stop it) and, when it ends, its exit code.
+  # silent stdin). tee writes its pid (to stop it) and, when it ends, its exit code. tee reads fd 3, not
+  # fd 0: dash points a background command's stdin at /dev/null before its own redirections.
   ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" > "$T/out" 2> "$T/err" \
-    < <(sh -c 'tee "$2" <&0 2>/dev/null & echo $! > "$1"; wait $!; echo $? > "$3"' sh "$T/tee.pid" "$COPY" "$T/tee.rc" <&3) 3<&- &
+    < <(sh -c 'tee "$2" <&3 3<&- 2>/dev/null & echo $! > "$1"; wait $!; echo $? > "$3"' sh "$T/tee.pid" "$COPY" "$T/tee.rc") 3<&- &
   pid=$!
   exec 3<&-
   for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -s "$T/tee.pid" ]] && break; sleep 0.1; done
