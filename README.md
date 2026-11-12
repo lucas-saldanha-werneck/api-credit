@@ -38,7 +38,7 @@ When the API refuses:
 | `CLAUDE_CREDITO=off`, or the caller already set `ANTHROPIC_API_KEY` | plain `claude`, untouched |
 | The API refused less than 6 hours ago | subscription |
 | No key stored | subscription |
-| Anything else | API, with your key. A short reply with "Credit balance is too low", "Invalid API key" or another billing or key error starts the 6-hour pause, and the same call (same arguments, same stdin) runs again on the subscription |
+| Anything else | API, with your key. If the API refuses ("Credit balance is too low", "Invalid API key" or another billing or key error, read from claude's error channel, not from the answer), the 6-hour pause starts. The same call (same arguments, same stdin) runs again on the subscription only when it is proven that no turn ran, so nothing can have acted yet (see below); otherwise the error is returned as it came |
 
 The output, the error output and the exit code are the ones `claude` gave. One notice that Claude
 Code prints when a key is set ("claude.ai connectors are disabled because ANTHROPIC_API_KEY...") is
@@ -114,7 +114,15 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
   the fallback to the subscription.
 - **What the credit covers** is Anthropic's rule and can change. Check your plan's help page.
 - A refusal costs the time of one failed call (about 2 seconds with a small prompt), once per pause.
-- A reply shorter than 6000 bytes that contains one of the refusal texts is treated as a refusal.
+- **When a refused call is repeated.** Only when no turn ran, so no tool can have acted: with text
+  output, claude-credito gives the call its own `--session-id` and reads that session's transcript
+  (`~/.claude/projects/*/<id>.jsonl`, or under `CLAUDE_CONFIG_DIR`): the refusal must be claude's own
+  API error and there must be no real assistant message. With `--output-format json` or `stream-json`,
+  the result must have `"is_error":true` and `"modelUsage":{}` (no API request succeeded). When the
+  credit runs out in the middle of a call, or there is no proof (the caller passes `--resume`,
+  `--continue`, `--session-id` or `--no-session-persistence`, or no transcript was written), the error
+  is returned and only the pause starts. Without structured information, a failed reply (exit code not
+  0) shorter than 6000 bytes with one of the refusal texts counts as a refusal.
 
 ## Tests
 

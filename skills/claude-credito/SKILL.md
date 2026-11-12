@@ -7,7 +7,8 @@ description: Make a script, robot or scheduled job that calls `claude -p` use th
 
 `claude-credito` takes the same arguments as `claude`. A call with `-p`/`--print` runs with the
 user's Console API key (the plan's monthly API credit). If the API refuses (no credit left, bad key),
-the same call runs again on the subscription and the API is paused for 6 hours. A call without `-p`
+the API is paused for 6 hours, and the same call runs again on the subscription when no turn ran yet
+(if the credit ran out mid-call, after a tool may have acted, the error is returned instead). A call without `-p`
 goes straight to `claude`: an interactive session is not covered by the credit.
 
 ## Find the command
@@ -68,7 +69,8 @@ Keep a backup of any file you change, and test with one real call. Then run
 - A test of `claude -p` started from inside a Claude Code session inherits that session's
   environment and can give a false result. Test with a clean environment (`env -i HOME=... PATH=...`).
 - With a key that the API rejects, `claude -p` in text mode can exit 0 and print the error as the
-  answer. claude-credito reads the text, not the exit code.
+  answer. claude-credito reads claude's error channel (the session transcript, or the json result),
+  not the answer text and not the exit code.
 - If the Console organization has paid credits or auto-reload on, the API does not refuse when the
   monthly credit ends: it uses the paid balance. Tell the user to check the Console billing page.
 - `CLAUDE_CREDITO=off` in a job's environment sends that job to the subscription only.
