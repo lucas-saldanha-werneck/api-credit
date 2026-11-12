@@ -7,7 +7,7 @@ description: Make a script, robot or scheduled job that calls `claude -p` use th
 
 `claude-credito` takes the same arguments as `claude`. A call with `-p`/`--print` runs with the
 user's Console API key (the plan's monthly API credit). If the API refuses (no credit left, bad key),
-the API is paused for 6 hours, and the same call runs again on the subscription when no turn ran yet
+the API is paused for 6 hours for that key, and the same call runs again on the subscription when no turn ran yet
 (if the credit ran out mid-call, after a tool may have acted, the error is returned instead). A call without `-p`
 goes straight to `claude`: an interactive session is not covered by the credit.
 
@@ -74,4 +74,4 @@ Keep a backup of any file you change, and test with one real call. Then run
 - If the Console organization has paid credits or auto-reload on, the API does not refuse when the
   monthly credit ends: it uses the paid balance. Tell the user to check the Console billing page.
 - `CLAUDE_CREDITO=off` in a job's environment sends that job to the subscription only.
-- `claude-credito --credit-resume` ends the 6-hour pause (for example after the monthly credit renews).
+- `claude-credito --credit-resume` ends the 6-hour pauses (for example after the monthly credit renews).

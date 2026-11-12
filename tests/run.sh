@@ -20,17 +20,21 @@ export HOME="$W/home" FAKE_DIR="$W" CLAUDE_CREDITO_KEYCHAIN=off
 mkdir -p "$HOME" "$W/fakebin" "$W/work"
 export PATH="$W/fakebin:/usr/bin:/bin"
 CC="$R/bin/claude-credito"
-PRE="sk-ant-"; GOOD="${PRE}test-good"; LOW="${PRE}test-low"; MIDLOW="${PRE}test-midlow"; WRONG="${PRE}test-wrong"   # not real keys
+PRE="sk-ant-"; GOOD="${PRE}test-good"; LOW="${PRE}test-low"; MIDLOW="${PRE}test-midlow"; WRONG="${PRE}test-wrong"; TOOLTEXT="${PRE}test-tooltext"   # not real keys
 LOG="$HOME/.local/state/claude-credito/claude-credito.log"
-PAUSE="$HOME/.local/state/claude-credito/paused"
+STATE_DIR="$HOME/.local/state/claude-credito"
+PAUSE="$STATE_DIR/paused-*"   # one pause file per key (a glob: test with paused_any)
+paused_any() { ls $PAUSE >/dev/null 2>&1; }
 
 cat > "$W/fakebin/claude" <<'EOF'
-#!/bin/sh
+#!/bin/bash
 # fake claude: records each call and answers by the key it was given. Like the real one (checked with
 # claude 2.1.322), with --session-id it writes a transcript, where an API error is a "<synthetic>"
 # assistant line with "isApiErrorMessage":true and a real turn is an assistant line with a real model;
 # with --output-format json/stream-json the result line has is_error and modelUsage ({} = no API call worked).
-in="$(cat)"
+# Like the real claude, FAKE_STDIN_GIVEUP gives up on a stdin that stays silent (here after 1 s).
+if [ -n "${FAKE_STDIN_GIVEUP:-}" ]; then in=""; IFS= read -r -t 1 in || true; else in="$(cat)"; fi
+[ -n "${FAKE_SLEEP:-}" ] && { echo $$ > "$FAKE_DIR/pid"; exec sleep "$FAKE_SLEEP"; }
 echo "key=${ANTHROPIC_API_KEY:-none} stdin=[$in] args=$*" >> "$FAKE_DIR/calls"
 sid=""; fmt=text; prev=""
 for a in "$@"; do
@@ -62,19 +66,23 @@ answer() {
 }
 case "${ANTHROPIC_API_KEY:-}" in
   "")       echo "sub-ok [$in]"; echo "sub-err" >&2; exit "${FAKE_SUB_RC:-0}" ;;
-  *good)    if [ -n "${FAKE_MENTION:-}" ]; then answer "The log shows Invalid API key in service X" "${FAKE_API_RC:-0}" 1 0; fi
+  *good)    if [ -n "${FAKE_RAW:-}" ]; then printf '\xe2\x9a\xa0 claude.ai connectors are disabled because %s is set\nraw\0bytes, no final newline' "ANTHROPIC_API_KEY"; exit 0; fi
+            if [ -n "${FAKE_MENTION:-}" ]; then answer "The log shows Invalid API key in service X" "${FAKE_API_RC:-0}" 1 0; fi
             transcript "$USER" "$REAL"
             echo "⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY is set"
             if [ -n "${FAKE_BIG:-}" ]; then head -c 7000 /dev/zero | tr '\0' x; echo " Invalid API key"; fi
             echo "api-ok [$in]"; echo "api-err" >&2; exit "${FAKE_API_RC:-0}" ;;
   *midlow)  answer "Credit balance is too low" 1 1 1 ;;   # it acted (a tool ran), then the credit ran out
+  *tooltext) # a real turn whose tool input holds the text "model":"<synthetic>", then the credit ran out
+            transcript "$USER" '{"type":"assistant","message":{"model":"claude-x","role":"assistant","content":[{"type":"tool_use","name":"Agent","input":{"model":"<synthetic>"}}]}}' "$(syn "Credit balance is too low")"
+            echo "Credit balance is too low"; exit 1 ;;
   *low)     answer "Credit balance is too low" 1 0 1 ;;   # refused on the first request
   *)        answer "Invalid API key · Fix external API key" 0 0 1 ;;   # some versions exit 0 here
 esac
 EOF
 chmod +x "$W/fakebin/claude"
 calls() { if [ -f "$W/calls" ]; then wc -l < "$W/calls" | tr -d ' '; else echo 0; fi; }
-reset() { rm -f "$W/calls" "$PAUSE" "$LOG"; }
+reset() { rm -f "$W/calls" $PAUSE "$LOG"; }
 cd "$W/work" || exit 1
 
 echo "== which call uses the API"
@@ -106,15 +114,17 @@ reset
 OUT=$(echo "question" | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>"$W/err")
 check "credit too low: the subscription answers" "$OUT" "sub-ok [question]"
 check "credit too low: two calls, same stdin" "$(cut -d' ' -f1,2 "$W/calls" | tr '\n' ';')" "key=$LOW stdin=[question];key=none stdin=[question];"
-[ -f "$PAUSE" ] && ok "pause file written" || bad "no pause file"
+paused_any && ok "pause file written" || bad "no pause file"
 grep -q "API REFUSED (Credit balance is too low, rc=1)" "$LOG" && grep -q "subscription rc=0" "$LOG" && ok "log lines: refused, subscription" || bad "log: $(cat "$LOG")"
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
+check "paused: that key goes straight to the subscription" "$OUT|$(calls)" "sub-ok [q]|3"
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
-check "paused: straight to the subscription, even with a good key" "$OUT|$(calls)" "sub-ok [q]|3"
-OUT=$(CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" --credit-status); echo "$OUT" | grep -q "^pause: on since" && ok "status shows the pause" || bad "$OUT"
-OUT=$(echo q | CLAUDE_CREDITO_PAUSE_S=0 CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
-check "pause over: API again" "$OUT" "api-ok [q]"
-[ -f "$PAUSE" ] && bad "pause file still there" || ok "expired pause file removed"
-: > "$PAUSE"; OUT=$(bash "$CC" --credit-resume); [ ! -f "$PAUSE" ] && check "--credit-resume ends the pause" "$OUT" "pause ended"
+check "AC-08: another key is not paused by that refusal" "$OUT|$(calls)" "api-ok [q]|4"
+OUT=$(CLAUDE_CREDITO_KEY="$LOW" bash "$CC" --credit-status); echo "$OUT" | grep -q "^pause: on since" && ok "status shows the pause of the key in use" || bad "$OUT"
+ls "$STATE_DIR"/paused-* 2>/dev/null | grep -q "test-low" && bad "the key itself is in the pause file name" || ok "pause file name holds no key text"
+OUT=$(echo q | CLAUDE_CREDITO_PAUSE_S=0 CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
+check "pause over: API again (refused again here, so paused again)" "$OUT|$(calls)" "sub-ok [q]|6"
+: > "$STATE_DIR/paused-x"; OUT=$(bash "$CC" --credit-resume); paused_any || check "--credit-resume ends every pause" "$OUT" "pause ended"
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$WRONG" bash "$CC" -p 2>/dev/null)
 check "invalid key answered with exit 0: still seen as a refusal" "$OUT|$(calls)" "sub-ok [q]|2"
@@ -132,14 +142,14 @@ grep -qE "^key=$LOW stdin=\[q\] args=--session-id [0-9a-f-]{36} -p x$" "$W/calls
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$MIDLOW" bash "$CC" -p 2>/dev/null); rc=$?
 check "credit ran out after a tool ran: not repeated, the error and exit code are returned" "$OUT|$rc|$(calls)" "Credit balance is too low|1|1"
-[ -f "$PAUSE" ] && ok "credit ran out after a tool ran: API paused" || bad "no pause file"
+paused_any && ok "credit ran out after a tool ran: API paused" || bad "no pause file"
 grep -q "API REFUSED (Credit balance is too low, rc=1).*not repeated" "$LOG" && ok "log says it was not repeated" || bad "log: $(cat "$LOG")"
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$GOOD" FAKE_MENTION=1 bash "$CC" -p 2>/dev/null)
-check "short answer that mentions 'Invalid API key': one call, no pause" "$OUT|$(calls)|$([ -f "$PAUSE" ] && echo paused)" "The log shows Invalid API key in service X|1|"
+check "short answer that mentions 'Invalid API key': one call, no pause" "$OUT|$(calls)|$(paused_any && echo paused)" "The log shows Invalid API key in service X|1|"
 reset
 echo q | CLAUDE_CREDITO_KEY="$GOOD" FAKE_MENTION=1 FAKE_API_RC=1 bash "$CC" -p >/dev/null 2>&1; rc=$?
-check "same answer with exit 1: still one call, no pause (the error is not from the API)" "$rc|$(calls)|$([ -f "$PAUSE" ] && echo paused)" "1|1|"
+check "same answer with exit 1: still one call, no pause (the error is not from the API)" "$rc|$(calls)|$(paused_any && echo paused)" "1|1|"
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --output-format json 2>/dev/null)
 check "json, refused before any turn: repeated on the subscription" "$OUT|$(calls)" "sub-ok [q]|2"
@@ -148,7 +158,7 @@ reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$MIDLOW" bash "$CC" -p --output-format=json 2>/dev/null)
 case "$OUT" in '{"type":"result"'*'"is_error":true'*) r=json ;; *) r="$OUT" ;; esac
 check "json, credit ran out after a turn: not repeated, json returned as is" "$r|$(calls)" "json|1"
-[ -f "$PAUSE" ] && ok "json, after a turn: API paused" || bad "no pause file"
+paused_any && ok "json, after a turn: API paused" || bad "no pause file"
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --verbose --output-format stream-json 2>/dev/null)
 check "stream-json with a long init event, refused before any turn: repeated" "$OUT|$(calls)" "sub-ok [q]|2"
@@ -156,7 +166,7 @@ reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --resume abc 2>/dev/null); rc=$?
 check "caller's own session (--resume): no proof, so not repeated; error returned" "$OUT|$rc|$(calls)" "Credit balance is too low|1|1"
 grep -q -- "--session-id" "$W/calls" && bad "--resume call got a --session-id" || ok "--resume: arguments untouched"
-[ -f "$PAUSE" ] && ok "--resume: API paused" || bad "no pause file"
+paused_any && ok "--resume: API paused" || bad "no pause file"
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" FAKE_NO_TRANSCRIPT=1 bash "$CC" -p 2>/dev/null)
 check "no transcript written: no proof, so not repeated" "$OUT|$(calls)" "Credit balance is too low|1"
@@ -164,12 +174,47 @@ reset
 OUT=$(echo q | CLAUDE_CONFIG_DIR="$W/cfgdir" CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
 check "transcript found under CLAUDE_CONFIG_DIR" "$OUT|$(calls)" "sub-ok [q]|2"
 
+echo "== audit round 2"
+reset
+# AC-01: killing the wrapper also stops the claude it started
+CLAUDE_CREDITO_KEY="$GOOD" FAKE_SLEEP=30 bash "$CC" -p x </dev/null >/dev/null 2>&1 & WP=$!
+i=0; until [ -s "$W/pid" ] || [ $i -gt 50 ]; do sleep 0.1; i=$((i+1)); done
+CP=$(cat "$W/pid" 2>/dev/null); kill -TERM $WP 2>/dev/null; wait $WP 2>/dev/null
+i=0; while [ -n "$CP" ] && kill -0 "$CP" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done
+if [ -n "$CP" ] && ! kill -0 "$CP" 2>/dev/null; then ok "AC-01: TERM to the wrapper reaches claude"; else bad "AC-01: claude $CP still running"; kill "$CP" 2>/dev/null; fi
+rm -f "$W/pid"
+reset
+# AC-02: a tool input that holds "model":"<synthetic>" is still a real turn: not repeated
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$TOOLTEXT" bash "$CC" -p 2>/dev/null)
+check "AC-02: real turn whose tool input names <synthetic>: not repeated" "$OUT|$(calls)" "Credit balance is too low|1"
+reset
+# AC-03: a stdin pipe that stays open and silent does not hang the wrapper (claude gives up on it)
+mkfifo "$W/silent"; ( exec sleep 8 > "$W/silent" ) & SP=$!
+start=$(date +%s)
+OUT=$(CLAUDE_CREDITO_KEY="$GOOD" FAKE_STDIN_GIVEUP=1 bash "$CC" -p x < "$W/silent" 2>/dev/null)
+el=$(( $(date +%s) - start )); kill $SP 2>/dev/null; wait $SP 2>/dev/null; rm -f "$W/silent"
+if [ $el -lt 6 ]; then check "AC-03: open silent stdin: the wrapper returns when claude does" "$OUT" "api-ok []"; else bad "AC-03: took ${el}s: $OUT"; fi
+reset
+# AC-04: when the copy of stdin cannot be kept whole, claude still gets all of it and a refusal is not repeated
+OUT=$(printf 'line1 line2' | CLAUDE_CREDITO_KEY="$LOW" CLAUDE_CREDITO_TEST_COPY_FAIL=1 bash "$CC" -p 2>/dev/null)
+check "AC-04: copy failed: API call got all stdin; not repeated" "$(head -n 1 "$W/calls" | cut -d' ' -f2-3)|$(calls)" "stdin=[line1 line2]|1"
+reset
+# AC-07: the answer comes out byte for byte (no added newline, NUL kept), only the notice line removed
+printf 'raw\0bytes, no final newline' > "$W/want"
+CLAUDE_CREDITO_KEY="$GOOD" FAKE_RAW=1 bash "$CC" -p x </dev/null > "$W/got" 2>/dev/null
+cmp -s "$W/got" "$W/want" && ok "AC-07: output kept byte for byte" || bad "AC-07: got $(od -c "$W/got" | head -n 2)"
+
 echo "== key, config, status"
 reset
 OUT=$(echo "$GOOD" | bash "$CC" --credit-store-key); check "store the key from stdin" "$OUT" "key stored (ends in …good)"
 F="$HOME/.config/claude-credito/key"
 P=$(ls -l "$F" | cut -c1-10); check "key file is private" "$P" "-rw-------"
 OUT=$(echo q | bash "$CC" -p 2>/dev/null); check "the stored key is used" "$OUT" "api-ok [q]"
+rm -f "$F"; echo "do not touch" > "$W/target"; chmod 644 "$W/target"; ln -s "$W/target" "$F"
+OUT=$(echo "$GOOD" | bash "$CC" --credit-store-key)
+check "AC-06: a key file that is a link: the link is replaced, its target untouched" "$(cat "$W/target")|$([ -L "$F" ] && echo link)|$(ls -l "$F" | cut -c1-10)" "do not touch||-rw-------"
+rm -f "$F"; (umask 022; echo old > "$F"); chmod 644 "$F"
+echo "$GOOD" | bash "$CC" --credit-store-key >/dev/null; check "AC-06: an open key file ends private" "$(ls -l "$F" | cut -c1-10)" "-rw-------"
 OUT=$(echo "not-a-key" | bash "$CC" --credit-store-key 2>&1); check "a wrong-looking key is refused" "$?|$OUT" "1|that is not a Console API key (it starts with sk-ant-)"
 rm -f "$F"
 OUT=$(CLAUDE_CREDITO_KEY_COMMAND="echo $LOW" bash "$CC" --credit-store-key </dev/null); check "store the key from a command" "$OUT" "key stored (ends in …-low)"
@@ -201,6 +246,13 @@ rm -f "$HOME/.config/claude-credito/config"
 # a script that calls a bare `claude`, with the shim first on PATH: the shim must not find itself
 OUT=$(echo q | PATH="$HOME/.local/share/claude-credito/shim:$PATH" CLAUDE_CREDITO_KEY="$GOOD" claude -p 2>/dev/null)
 check "shim first on PATH: goes through claude-credito to the real claude" "$OUT|$(calls)" "api-ok [q]|1"
+# AC-05: an install folder with & | and $( ) in its name: the shim still runs the tool, nothing is executed
+WEIRD="$W/we&ird|dir \$(touch $W/pwned)"
+INSTALL_BIN_DIR="$WEIRD" bash "$R/install.sh" >/dev/null 2>&1
+OUT=$(echo q | PATH="$HOME/.local/share/claude-credito/shim:$PATH" CLAUDE_CREDITO_KEY="$GOOD" claude -p 2>/dev/null)
+check "AC-05: odd install folder: the shim reaches the tool" "$OUT|$([ -e "$W/pwned" ] && echo pwned)" "api-ok [q]|"
+INSTALL_BIN_DIR="$WEIRD" bash "$R/install.sh" --uninstall >/dev/null 2>&1
+bash "$R/install.sh" >/dev/null
 OUT=$(bash "$R/install.sh" --uninstall); [ ! -e "$HOME/.local/bin/claude-credito" ] && [ ! -e "$HOME/.local/share/claude-credito/shim/claude" ] && ok "--uninstall removes both" || bad "$OUT"
 
 echo
