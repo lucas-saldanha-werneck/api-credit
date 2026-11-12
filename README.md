@@ -36,13 +36,16 @@ When the API refuses:
 |---|---|
 | No `-p` / `--print` (an interactive session) | plain `claude`, no key |
 | `CLAUDE_CREDITO=off`, or the caller already set `ANTHROPIC_API_KEY` | plain `claude`, untouched |
-| The API refused less than 6 hours ago | subscription |
 | No key stored | subscription |
+| The API refused this key less than 6 hours ago (each key has its own pause) | subscription |
 | Anything else | API, with your key. If the API refuses ("Credit balance is too low", "Invalid API key" or another billing or key error, read from claude's error channel, not from the answer), the 6-hour pause starts. The same call (same arguments, same stdin) runs again on the subscription only when it is proven that no turn ran, so nothing can have acted yet (see below); otherwise the error is returned as it came |
 
 The output, the error output and the exit code are the ones `claude` gave. One notice that Claude
 Code prints when a key is set ("claude.ai connectors are disabled because ANTHROPIC_API_KEY...") is
-removed, because it is not part of the answer.
+removed, because it is not part of the answer; everything else comes out byte for byte. A TERM, INT
+or HUP sent to claude-credito (a caller's timeout) is passed on to the claude it runs. stdin reaches
+claude as it comes (a copy is kept for a repeat), so a stdin that stays open with no data does not
+hang it any longer than plain `claude`.
 
 ## Install
 
@@ -99,7 +102,7 @@ that is already there.
 | `CLAUDE_CREDITO_KEYCHAIN` | on | `off`: keep the key in the key file, not in the macOS Keychain |
 | `CLAUDE_CREDITO_PAUSE_S` | `21600` | Seconds on the subscription after a refusal |
 | `CLAUDE_CREDITO_LOG` | `~/Library/Logs/claude-credito.log` on macOS, `~/.local/state/claude-credito/claude-credito.log` elsewhere | Log file: one line per call, no prompt, no answer, no key |
-| `CLAUDE_CREDITO_STATE` | `~/.local/state/claude-credito` | Folder of the pause file |
+| `CLAUDE_CREDITO_STATE` | `~/.local/state/claude-credito` | Folder of the pause files (one per key, named by a hash of the key) |
 | `CLAUDE_CREDITO_CONFIG` | `~/.config/claude-credito/config` | The config file |
 
 Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the pause now),
@@ -108,7 +111,8 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
 ## Limits
 
 - **No streaming.** The output arrives when the call ends, because the tool must read the reply
-  before it decides to repeat the call. Do not use it where the output is read while it runs.
+  before it decides to repeat the call. Do not use it where the output is read while it runs. For the
+  same reason the output and the error output come out one after the other, not interleaved.
 - **Paid credits.** If your Console organization has paid credits or auto-reload on, the API does not
   refuse when the monthly credit ends: it spends the paid balance. Turn auto-reload off if you want
   the fallback to the subscription.
@@ -122,7 +126,9 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
   credit runs out in the middle of a call, or there is no proof (the caller passes `--resume`,
   `--continue`, `--session-id` or `--no-session-persistence`, or no transcript was written), the error
   is returned and only the pause starts. Without structured information, a failed reply (exit code not
-  0) shorter than 6000 bytes with one of the refusal texts counts as a refusal.
+  0) shorter than 6000 bytes with one of the refusal texts counts as a refusal. The transcript is read
+  field by field with `jq` (or `python3`); with neither, there is no proof and the call is not repeated.
+  If the copy of stdin could not be written whole, the call is not repeated either.
 
 ## Tests
 
@@ -130,7 +136,7 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
 bash tests/run.sh
 ```
 
-40 checks with a fake `claude`, a fake HOME and no Keychain. They run on macOS and Linux in CI.
+66 checks with a fake `claude`, a fake HOME and no Keychain. They run on macOS and Linux in CI.
 
 ## Uninstall
 

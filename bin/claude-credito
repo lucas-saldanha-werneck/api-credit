@@ -15,13 +15,14 @@
 #
 # How it decides:
 #   1. No -p/--print, CLAUDE_CREDITO=off, or ANTHROPIC_API_KEY already set by the caller -> plain claude.
-#   2. Paused (the API refused less than CLAUDE_CREDITO_PAUSE_S ago, default 6 h) -> subscription.
-#   3. No key stored -> subscription.
+#   2. No key stored -> subscription.
+#   3. Paused (the API refused this key less than CLAUDE_CREDITO_PAUSE_S ago, default 6 h) -> subscription.
 #   4. Otherwise it runs with the key. If the API refuses it ("Credit balance is too low", "Invalid API key"
 #      or another billing/key error, read from claude's error channel, not from the answer), it starts the
 #      pause. It runs the call again on the subscription only when it can prove no turn ran (no tool could
 #      have acted): text output -> the session transcript of the call has no real assistant message;
 #      json/stream-json -> the result has "modelUsage":{}. Otherwise it returns the error as it came.
+#   A TERM, INT or HUP sent to this wrapper is passed on to the claude it runs.
 #
 # Settings: environment variables, or KEY=VALUE lines in ~/.config/claude-credito/config (the environment wins).
 #   CLAUDE_CREDITO=off            never use the API
@@ -30,12 +31,12 @@
 #   CLAUDE_CREDITO_KEY_COMMAND    a command that prints the key; --credit-store-key uses it instead of asking
 #   CLAUDE_CREDITO_KEYCHAIN=off   do not use the macOS Keychain (use the key file)
 #   CLAUDE_CREDITO_PAUSE_S        seconds to stay on the subscription after a refusal (default 21600)
-#   CLAUDE_CREDITO_LOG            log file      CLAUDE_CREDITO_STATE   folder of the pause file
+#   CLAUDE_CREDITO_LOG            log file      CLAUDE_CREDITO_STATE   folder of the pause files
 #   CLAUDE_CREDITO_CONFIG         config file
 # PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
 
 set -u
-VERSION="0.1.5"
+VERSION="0.1.6"
 SELF="${BASH_SOURCE[0]}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
 CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"
@@ -56,7 +57,7 @@ STATE="${CLAUDE_CREDITO_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-cred
 if [[ -n "${CLAUDE_CREDITO_LOG:-}" ]]; then LOG="$CLAUDE_CREDITO_LOG"
 elif [[ -d "$HOME/Library/Logs" ]]; then LOG="$HOME/Library/Logs/claude-credito.log"
 else LOG="$STATE/claude-credito.log"; fi
-PAUSE="$STATE/paused"
+PAUSE=""   # set per key below: $STATE/paused-<hash of the key>
 PAUSE_S="${CLAUDE_CREDITO_PAUSE_S:-21600}"
 [[ "$PAUSE_S" =~ ^[0-9]+$ ]] || PAUSE_S=21600
 KEY_FILE="$CONF_DIR/key"
@@ -68,6 +69,35 @@ NOTICE_RE='^⚠ claude\.ai connectors are disabled because ANTHROPIC_API_KEY'
 log() {
   mkdir -p "$(dirname "$LOG")" 2>/dev/null
   printf '%s %s (%s)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" "${PWD/#$HOME/~}" >> "$LOG" 2>/dev/null || true
+}
+
+# Number of assistant messages in a transcript whose .message.model is not "<synthetic>" (claude's own
+# API error), read field by field with jq or python3, not by text. Empty when it cannot tell.
+real_turns() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -n '[inputs | select(.type == "assistant") | select((.message.model // "") != "<synthetic>")] | length' "$1" 2>/dev/null
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -I -c 'import json, sys
+n = 0
+for l in open(sys.argv[1], encoding="utf-8"):
+    if l.strip():
+        d = json.loads(l)
+        if d.get("type") == "assistant" and ((d.get("message") or {}).get("model") or "") != "<synthetic>":
+            n += 1
+print(n)' "$1" 2>/dev/null
+  fi
+}
+
+# Print a file byte for byte, less its first line that is the connectors notice (no newline added, a NUL
+# byte kept).
+emit() {
+  local m off len
+  m="$(LC_ALL=C grep -boaE "${NOTICE_RE}.*" "$1" 2>/dev/null | head -n 1)"
+  if [[ -z "$m" ]]; then cat "$1"; return; fi
+  off="${m%%:*}"; m="${m#*:}"
+  len=$(printf '%s' "$m" | LC_ALL=C wc -c | tr -d ' ')
+  (( off > 0 )) && head -c "$off" "$1"
+  tail -c +"$(( off + len + 2 ))" "$1"
 }
 
 # The claude to run: the setting, else the first `claude` on PATH that is neither this tool nor its shim.
@@ -101,8 +131,17 @@ mtime() {
   [[ "$m" =~ ^[0-9]+$ ]] || m=0
   printf '%s' "$m"
 }
+# A short id of a key for the pause file name (never the key itself).
+key_id() {
+  local h
+  if command -v sha256sum >/dev/null 2>&1; then h="$(printf '%s' "$1" | sha256sum)"
+  elif command -v shasum >/dev/null 2>&1; then h="$(printf '%s' "$1" | shasum -a 256)"
+  else h="$(printf '%s' "$1" | cksum)"; fi
+  h="${h%% *}"; printf '%s' "${h:0:16}"
+}
+pause_file() { printf '%s/paused-%s' "$STATE" "$(key_id "$1")"; }
 paused() {
-  [[ -f "$PAUSE" ]] || return 1
+  [[ -n "$PAUSE" && -f "$PAUSE" ]] || return 1
   if (( $(date +%s) - $(mtime "$PAUSE") >= PAUSE_S )); then rm -f "$PAUSE" 2>/dev/null; return 1; fi
   return 0
 }
@@ -115,6 +154,8 @@ case "${1:-}" in
   --credit-status|--credito-status)
     k="$(stored_key)"
     if [[ "$k" == sk-ant-* ]]; then echo "key: stored (ends in …${k: -4})"; else echo "key: NOT stored (run: claude-credito --credit-store-key)"; fi
+    [[ "${CLAUDE_CREDITO_KEY:-}" == sk-ant-* ]] && k="$CLAUDE_CREDITO_KEY"
+    [[ "$k" == sk-ant-* ]] && PAUSE="$(pause_file "$k")"
     if paused; then
       m="$(mtime "$PAUSE")"
       echo "pause: on since $(date -r "$m" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$m" '+%Y-%m-%d %H:%M'), lasts ${PAUSE_S}s"
@@ -137,12 +178,14 @@ case "${1:-}" in
       # through stdin, so the key never shows in the process list
       printf 'add-generic-password -U -s %s -a %s -w %s\n' "$KC_SERVICE" "$KC_ACCOUNT" "$k" | /usr/bin/security -i >/dev/null 2>&1
     else
-      mkdir -p "$CONF_DIR" && (umask 077; printf '%s\n' "$k" > "$KEY_FILE") && chmod 600 "$KEY_FILE"
+      # a new 600 file next to it, renamed over it: never writes through a link, never open for a moment
+      mkdir -p "$CONF_DIR" && tmpk="$(umask 077; mktemp "$CONF_DIR/.key.XXXXXX")" \
+        && { printf '%s\n' "$k" > "$tmpk" && chmod 600 "$tmpk" && mv -f "$tmpk" "$KEY_FILE" || rm -f "$tmpk"; }
     fi
     if [[ "$(stored_key)" == "$k" ]]; then echo "key stored (ends in …${k: -4})"; exit 0; fi
     echo "could not store the key" >&2; exit 1 ;;
   --credit-resume|--credito-despausar)
-    rm -f "$PAUSE" && echo "pause ended"; exit 0 ;;
+    rm -f "$STATE"/paused "$STATE"/paused-* && echo "pause ended"; exit 0 ;;
 esac
 
 REAL="$(find_real)" || { echo "claude-credito: claude not found (install Claude Code or set CLAUDE_CREDITO_REAL)" >&2; exit 127; }
@@ -154,13 +197,7 @@ if (( ! headless )) || [[ "${CLAUDE_CREDITO:-on}" == "off" ]] || [[ -n "${ANTHRO
   exec "$REAL" "$@"
 fi
 
-# 2. Paused -> subscription.
-if paused; then
-  log "subscription (paused)"
-  exec "$REAL" "$@"
-fi
-
-# 3. No key -> subscription.
+# 2. No key -> subscription.
 KEY="${CLAUDE_CREDITO_KEY:-}"
 [[ "$KEY" == sk-ant-* ]] || KEY="$(stored_key)"
 if [[ "$KEY" != sk-ant-* ]]; then
@@ -168,11 +205,45 @@ if [[ "$KEY" != sk-ant-* ]]; then
   exec "$REAL" "$@"
 fi
 
-# 4. Run on the API, keeping stdin and the output so the call can be repeated on the subscription.
+# 3. This key paused -> subscription. Each key has its own pause: a wrong key in one job does not
+# stop the others.
+PAUSE="$(pause_file "$KEY")"
+if paused; then
+  log "subscription (paused)"
+  exec "$REAL" "$@"
+fi
+
+# 4. Run on the API, keeping a copy of stdin and the output so the call can be repeated on the subscription.
 T="$(mktemp -d "${TMPDIR:-/tmp}/claude-credito.XXXXXX")" || exec "$REAL" "$@"
-trap 'rm -rf "$T"' EXIT
-IN=/dev/null
-if [[ ! -t 0 ]]; then cat > "$T/in"; IN="$T/in"; fi
+CHILD=""; TEE=""; GOT_SIG=""
+trap '[[ -n "$TEE" ]] && kill "$TEE" 2>/dev/null; rm -rf "$T"' EXIT
+# claude runs in the background so that a TERM, INT or HUP sent to this wrapper (a caller's timeout)
+# reaches it too, instead of leaving it running with no owner.
+for sig in TERM INT HUP; do
+  trap "GOT_SIG=$sig; [[ -n \"\$CHILD\" ]] && kill -$sig \"\$CHILD\" 2>/dev/null" "$sig"
+done
+# wait_child PID: waits for it (again after each signal), returns its exit code; after a signal, exits.
+wait_child() {
+  local rc=0
+  CHILD="$1"
+  wait "$CHILD" || rc=$?
+  while kill -0 "$CHILD" 2>/dev/null; do rc=0; wait "$CHILD" || rc=$?; done
+  CHILD=""
+  [[ -n "$GOT_SIG" ]] && exit "$rc"
+  return "$rc"
+}
+# stdin goes to claude through tee, which keeps the copy. claude itself decides when stdin is done (it
+# gives up on a pipe that stays silent), so an open stdin with no data does not hang the wrapper, and a
+# copy that could not be written whole (disk full) does not cut what claude gets.
+IN=/dev/null; COPY=/dev/null; copy_ok=1
+if [[ ! -t 0 ]]; then
+  mkfifo "$T/fifo" || exec "$REAL" "$@"
+  COPY="$T/in"; [[ -n "${CLAUDE_CREDITO_TEST_COPY_FAIL:-}" ]] && COPY="$T/no-such-dir/in"
+  exec 3<&0
+  tee "$COPY" <&3 > "$T/fifo" 2>/dev/null & TEE=$!
+  exec 3<&-
+  IN="$T/fifo"
+fi
 
 # Output format, and whether the caller manages the session itself (then no session id of our own).
 fmt=text; prev=""; own_session=0
@@ -195,7 +266,14 @@ if [[ "$fmt" != json && "$fmt" != stream-json ]] && (( ! own_session )); then
 fi
 
 rc=0
-ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" < "$IN" > "$T/out" 2> "$T/err" || rc=$?
+ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" < "$IN" > "$T/out" 2> "$T/err" &
+wait_child $! || rc=$?
+if [[ -n "$TEE" ]]; then
+  # tee is done once claude read to the end; if claude stopped before, tee waits on stdin: stop it.
+  kill "$TEE" 2>/dev/null; trc=0; wait "$TEE" 2>/dev/null || trc=$?; TEE=""
+  # 143 = stopped here (the copy holds what came before claude finished); any other error = copy not whole
+  (( trc == 0 || trc == 143 )) || copy_ok=0
+fi
 
 # Did the API refuse (why), and is it proven that no turn ran (proven=1)?
 why=""; proven=0; known=0
@@ -214,7 +292,7 @@ elif [[ -n "$SID" ]]; then
     known=1
     # claude's own API error is a "<synthetic>" assistant line with "isApiErrorMessage":true
     why="$(grep -h '"isApiErrorMessage":true' "$tf" | tail -n 1 | grep -oE "$REFUSED_RE" | head -n 1)"
-    if [[ -n "$why" ]] && ! grep -h '"type":"assistant"' "$tf" | grep -vq '"model":"<synthetic>"'; then proven=1; fi
+    [[ -n "$why" && "$(real_turns "$tf")" == 0 ]] && proven=1
   fi
 fi
 if (( ! known )) && (( rc != 0 )); then
@@ -226,18 +304,23 @@ fi
 
 if [[ -n "$why" ]]; then
   mkdir -p "$STATE" 2>/dev/null; : > "$PAUSE"
-  if (( proven )); then
+  if (( proven && copy_ok )); then
     log "API REFUSED ($why, rc=$rc); the same call goes to the subscription; API paused ${PAUSE_S}s"
     rc=0
-    "$REAL" "$@" < "$IN" || rc=$?
+    "$REAL" "$@" < "$COPY" &
+    wait_child $! || rc=$?
     log "subscription rc=$rc"
     exit "$rc"
   fi
-  log "API REFUSED ($why, rc=$rc); not repeated (no proof that no turn ran: it may have acted); API paused ${PAUSE_S}s"
+  if (( proven )); then
+    log "API REFUSED ($why, rc=$rc); not repeated (the copy of stdin could not be kept whole); API paused ${PAUSE_S}s"
+  else
+    log "API REFUSED ($why, rc=$rc); not repeated (no proof that no turn ran: it may have acted); API paused ${PAUSE_S}s"
+  fi
 fi
 
 # The "connectors are disabled because ANTHROPIC_API_KEY..." notice is not part of the answer.
-grep -vE "$NOTICE_RE" "$T/out" || true
-grep -vE "$NOTICE_RE" "$T/err" >&2 || true
+emit "$T/out"
+emit "$T/err" >&2
 log "api rc=$rc"
 exit "$rc"

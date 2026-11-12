@@ -45,7 +45,8 @@ else
   cp "$R/bin/claude-credito" "$BIN/.claude-credito.new.$$" && chmod 755 "$BIN/.claude-credito.new.$$" \
     && mv -f "$BIN/.claude-credito.new.$$" "$BIN/claude-credito" || { echo "install.sh: could not write $BIN/claude-credito" >&2; exit 1; }
   # The shim runs the claude-credito installed above, wherever INSTALL_BIN_DIR put it.
-  sed "s|@CLAUDE_CREDITO@|$BIN/claude-credito|" "$R/shim/claude" > "$SHARE/shim/.claude.new.$$" && chmod 755 "$SHARE/shim/.claude.new.$$" \
+  # The path goes in shell-quoted (printf %q), so &, | or $( ) in it are just characters.
+  { sed '/@CLAUDE_CREDITO@/d' "$R/shim/claude" && printf 'exec %q "$@"\n' "$BIN/claude-credito"; } > "$SHARE/shim/.claude.new.$$" && chmod 755 "$SHARE/shim/.claude.new.$$" \
     && mv -f "$SHARE/shim/.claude.new.$$" "$SHARE/shim/claude" || { echo "install.sh: could not write $SHARE/shim/claude" >&2; exit 1; }
   echo "installed $BIN/claude-credito"
   echo "installed $SHARE/shim/claude"
