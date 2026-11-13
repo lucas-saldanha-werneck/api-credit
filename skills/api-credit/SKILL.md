@@ -1,11 +1,19 @@
 ---
-name: claude-credito
-description: Make a script, robot or scheduled job that calls `claude -p` use the plan's monthly API credit first, and the subscription when the API refuses, through the `claude-credito` command. Use when the user says "use my API credit for the robots", "run this script on the API credit", "claude-credito", "why did this job use my subscription?", "is the API credit being used?", "store my Console key", or when a `claude -p` job fails with "Credit balance is too low" or "Invalid API key".
+name: api-credit
+description: Make a script, robot or scheduled job that calls `claude -p` use the plan's monthly API credit first, and the subscription when the API refuses, through the `claude-credito` command. Use when the user says "use the API credit for the robots", "run this script on the API credit", "claude-credito", "why did this job use the subscription?", "is the API credit being used?", "store the Console key", or when a `claude -p` job fails with "Credit balance is too low" or "Invalid API key".
+version: "0.2.0"
 metadata:
   author: Lucas Saldanha Werneck <lucas@2olhares.com>
+  tags: [api, credit, claude-p, automation, billing]
 ---
 
 # claude-credito
+
+## Purpose
+
+Point scripts that call `claude -p` at the `claude-credito` command, so the plan's monthly API credit is
+used first and the subscription only when the API refuses. The command keeps its name; the skill is
+called `api-credit`.
 
 `claude-credito` takes the same arguments as `claude`. A call with `-p`/`--print` runs with the
 user's Console API key (the plan's monthly API credit). If the API refuses (no credit left, bad key),
@@ -97,3 +105,21 @@ Keep a backup of any file you change, and test with one real call. Then run
   (hidden input, macOS Keychain); the key never passes through the chat.
 - A `claude -p` job failed with "Credit balance is too low": the log shows `API REFUSED (...)` followed by
   `subscription rc=0`; explain the 6-hour pause, and offer `claude-credito --credit-resume` after the credit renews.
+
+## Prerequisites
+
+- `bash` and Claude Code (`claude`).
+- The `claude-credito` command, installed by `install.sh` (it writes to `~/.local/bin`).
+- A Console API key stored with `claude-credito --credit-store-key` (macOS Keychain, or `~/.config/claude-credito/key` elsewhere).
+
+## Limitations
+
+- No streaming: the output arrives when the call ends.
+- Interactive sessions (no `-p`) are not covered by the credit.
+- A refused call is repeated on the subscription only when it is proven that no turn ran.
+
+## Troubleshooting
+
+- Run `claude-credito --credit-status` first: key stored or not, API paused or not, last log lines.
+- Log file: `~/Library/Logs/claude-credito.log` on macOS (one line per call, no prompt, no key).
+- `subscription (paused)` in the log: the API refused less than 6 hours ago; `claude-credito --credit-resume` ends the pause.

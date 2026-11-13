@@ -2,7 +2,8 @@
 
 [![CI](https://github.com/lucas-saldanha-werneck/api-credit/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/api-credit/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/api-credit)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.8-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
+[![Skill score](https://img.shields.io/badge/skill%20score-98.8%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator)
 
 Run your `claude -p` scripts on your plan's monthly API credit first, and on your subscription when
 the API refuses. One command, `claude-credito`, that you call instead of `claude`.
@@ -83,8 +84,8 @@ job ran:
 /plugin install api-credit@lucas-tools
 ```
 
-The plugin is called `api-credit` because Claude Code reserves plugin names that start with
-`claude-`. The skill uses the `claude-credito` installed by `install.sh`, so run that too.
+The plugin and its skill are called `api-credit` because Claude Code reserves names that contain
+`claude`. The skill uses the `claude-credito` installed by `install.sh`, so run that too.
 
 Requires `bash` and Claude Code (`claude`).
 
