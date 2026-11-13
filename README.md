@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/github/license/lucas-saldanha-werneck/api-credit)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
 [![Skill score](https://img.shields.io/badge/skill%20score-98.8%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator)
+[![plugin score (proposal)](https://img.shields.io/badge/plugin%20score%20(proposal)-95.0%20A-brightgreen)](https://github.com/NVIDIA/SkillEvaluator/issues/508)
 
 Run your `claude -p` scripts on your plan's monthly API credit first, and on your subscription when
 the API refuses. One command, `claude-credito`, that you call instead of `claude`.
