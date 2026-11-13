@@ -5,6 +5,7 @@ All notable changes to this project are documented here. Versions follow [Semant
 ## [0.2.0] - 2026-11-13
 - Renamed the skill to `api-credit` (the old name broke the skill schema). The `claude-credito` command keeps its name.
 - Skill frontmatter has `version` and `tags`; the skill has Purpose, Prerequisites, Limitations and Troubleshooting sections; the description is in the third person.
+- README: demo video and badges; adds SECURITY.md.
 
 ## [0.1.8] - 2026-11-13
 - Skill author, Instructions and Examples sections.
@@ -13,16 +14,17 @@ All notable changes to this project are documented here. Versions follow [Semant
 - Feeds `claude` stdin through an anonymous pipe instead of a named FIFO.
 
 ## [0.1.6] - 2026-11-12
-- Audit fixes: signals, stdin through `tee`, exact output, a separate pause per key.
+- Signals to the wrapper reach `claude`; stdin goes through `tee`, so a silent open stdin no longer hangs.
+- Output is printed byte for byte; one pause file per key; the key file is written safely (600, renamed over).
 
 ## [0.1.5] - 2026-11-11
 - A refused call is repeated on the subscription only when it is proven that no turn ran.
 
 ## [0.1.4] - 2026-11-11
-- Maintenance (catalog renamed to `lucas-tools`).
+- Points to the catalog repo's new name, `lucas-tools`.
 
 ## [0.1.3] - 2026-11-11
-- Maintenance (catalog renamed to `lucas-tools`).
+- Catalog renamed to `lucas-tools`.
 
 ## [0.1.2] - 2026-11-11
 - `install.sh --dry-run` no longer prints "installed".
