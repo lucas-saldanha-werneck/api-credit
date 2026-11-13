@@ -1,7 +1,21 @@
 # api-credit
 
+[![CI](https://github.com/lucas-saldanha-werneck/api-credit/actions/workflows/test.yml/badge.svg)](https://github.com/lucas-saldanha-werneck/api-credit/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/lucas-saldanha-werneck/api-credit)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.1.8-blue)](CHANGELOG.md)
+
 Run your `claude -p` scripts on your plan's monthly API credit first, and on your subscription when
 the API refuses. One command, `claude-credito`, that you call instead of `claude`.
+
+[![api-credit demo: tap to open the video](https://github.com/user-attachments/assets/b8e21330-1d94-444d-b2a9-1782aadfd27c)](https://lucas-saldanha-werneck.github.io/api-credit/demo.mp4)
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/user-attachments/assets/763fe2d2-9c36-4cbe-b0bd-4073c7783114" alt="The one line that switches a script to claude-credito" width="320"><br>One line changes</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/df179a43-e444-4839-88c6-8d8b1318e73e" alt="The log showing the API refusal and the subscription fallback" width="320"><br>The log shows the fallback</td>
+<td align="center"><img src="https://github.com/user-attachments/assets/29acfb4c-840b-44e0-b208-21c540677b5b" alt="Summary: spend the credit, never stall" width="320"><br>The idea in short</td>
+</tr>
+</table>
 
 Some Claude plans come with a monthly API credit. It pays for `claude -p` and the Agent SDK only when
 they run with a Console API key. Scripts and scheduled jobs that call a plain `claude -p` use the
@@ -146,6 +160,10 @@ bash tests/run.sh
 
 Removes `claude-credito` and the shim. Your config, stored key and log stay. Scripts that call
 `claude-credito` must be pointed back at `claude`.
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 
