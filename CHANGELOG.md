@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-21
+- Preflight: before a real call, a 1-token request (`claude-haiku-5-5`) checks the key. A credit/key refusal there sends the call straight to the subscription, with no error for the caller and nothing to repeat (works with tools, `--no-session-persistence`, any output format). An OK is cached `CLAUDE_CREDITO_PREFLIGHT_S` seconds (default 600). Network errors, 429 and 5xx do not count as a refusal. `CLAUDE_CREDITO_PREFLIGHT=off` disables it.
+- Default pause is now 24 h (`CLAUDE_CREDITO_PAUSE_S=86400`): the API is checked once a day, and used again by itself when the credit is back.
+- A call that already ran a tool when the credit ended is still not repeated (documented).
+
 ## [Unreleased]
 - A refused call with `--tools ""` + `--strict-mcp-config` (no tool can run) is repeated on the subscription even with `--no-session-persistence`, where there is no transcript to prove it.
 

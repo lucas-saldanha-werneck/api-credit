@@ -8,8 +8,9 @@
 # Never use the API (everything runs on the subscription).
 #CLAUDE_CREDITO=off
 
-# Seconds to stay on the subscription after the API refuses a call. Default: 21600 (6 hours).
-#CLAUDE_CREDITO_PAUSE_S=21600
+# Seconds to stay on the subscription after the API refuses a call. Default: 86400 (24 hours): after a refusal the
+# API is checked again once a day, and used again by itself as soon as the credit is back.
+#CLAUDE_CREDITO_PAUSE_S=86400
 
 # A command that prints the Console API key (for example from your password manager).
 # `claude-credito --credit-store-key` runs it instead of asking you to paste the key.
@@ -21,3 +22,6 @@
 # Log file and state folder.
 #CLAUDE_CREDITO_LOG=~/Library/Logs/claude-credito.log
 #CLAUDE_CREDITO_STATE=~/.local/state/claude-credito
+
+# Before each real call a 1-token request checks the key; an OK is remembered this many seconds. Default: 600.
+#CLAUDE_CREDITO_PREFLIGHT_S=600
