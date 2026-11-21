@@ -41,7 +41,7 @@ log: /Users/you/Library/Logs/claude-credito.log
 When the API refuses:
 
 ```
-2026-11-12T09:00:01-0300 API REFUSED (Credit balance is too low, rc=1); the same call goes to the subscription; API paused 21600s (~/work/reports)
+2026-11-12T09:00:01-0300 API REFUSED (Credit balance is too low, rc=1); the same call goes to the subscription; API paused 86400s (~/work/reports)
 2026-11-12T09:00:04-0300 subscription rc=0 (~/work/reports)
 2026-11-12T09:30:00-0300 subscription (paused) (~/work/reports)
 ```
@@ -53,8 +53,8 @@ When the API refuses:
 | No `-p` / `--print` (an interactive session) | plain `claude`, no key |
 | `CLAUDE_CREDITO=off`, or the caller already set `ANTHROPIC_API_KEY` | plain `claude`, untouched |
 | No key stored | subscription |
-| The API refused this key less than 6 hours ago (each key has its own pause) | subscription |
-| Anything else | API, with your key. If the API refuses ("Credit balance is too low", "Invalid API key" or another billing or key error, read from claude's error channel, not from the answer), the 6-hour pause starts. The same call (same arguments, same stdin) runs again on the subscription only when it is proven that no turn ran, so nothing can have acted yet (see below); otherwise the error is returned as it came |
+| The API refused this key less than 24 hours ago (each key has its own pause) | subscription |
+| Anything else | First a **preflight**: 1 request (1 token, `claude-haiku-5-5`, about US$0.000002) to the API with your key. Refused (credit or key) -> pause + subscription at once, with no call run on the API, so nothing is repeated and the caller sees no error, with or without tools, `--no-session-persistence`, text or json. An OK is remembered for 10 minutes. Network error, timeout, 429, 5xx: not a refusal, the call goes on. Then the API, with your key. If the API refuses ("Credit balance is too low", "Invalid API key" or another billing or key error, read from claude's error channel, not from the answer), the 24-hour pause starts. The same call (same arguments, same stdin) runs again on the subscription only when it is proven that no turn ran, so nothing can have acted yet (see below); otherwise the error is returned as it came |
 
 The output, the error output and the exit code are the ones `claude` gave. One notice that Claude
 Code prints when a key is set ("claude.ai connectors are disabled because ANTHROPIC_API_KEY...") is
@@ -116,7 +116,10 @@ that is already there.
 | `CLAUDE_CREDITO_KEY` | the stored key | The key itself, for one call |
 | `CLAUDE_CREDITO_KEY_COMMAND` | empty | A command that prints the key (your password manager). `--credit-store-key` runs it instead of asking |
 | `CLAUDE_CREDITO_KEYCHAIN` | on | `off`: keep the key in the key file, not in the macOS Keychain |
-| `CLAUDE_CREDITO_PAUSE_S` | `21600` | Seconds on the subscription after a refusal |
+| `CLAUDE_CREDITO_PAUSE_S` | `86400` | Seconds on the subscription after a refusal. When it ends, the next call checks the API again (preflight): credit back -> the API is used again by itself; still refused -> a new pause. So the API is checked once a day |
+| `CLAUDE_CREDITO_PREFLIGHT` | on | `off`: no preflight (back to the old behaviour: repeat only when proven) |
+| `CLAUDE_CREDITO_PREFLIGHT_S` | `600` | Seconds an OK preflight is remembered |
+| `CLAUDE_CREDITO_PREFLIGHT_MODEL` | `claude-haiku-5-5` | Model of the 1-token check |
 | `CLAUDE_CREDITO_LOG` | `~/Library/Logs/claude-credito.log` on macOS, `~/.local/state/claude-credito/claude-credito.log` elsewhere | Log file: one line per call, no prompt, no answer, no key |
 | `CLAUDE_CREDITO_STATE` | `~/.local/state/claude-credito` | Folder of the pause files (one per key, named by a hash of the key) |
 | `CLAUDE_CREDITO_CONFIG` | `~/.config/claude-credito/config` | The config file |
@@ -134,7 +137,8 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
   the fallback to the subscription.
 - **What the credit covers** is Anthropic's rule and can change. Check your plan's help page.
 - A refusal costs the time of one failed call (about 2 seconds with a small prompt), once per pause.
-- **When a refused call is repeated.** Only when no turn ran, so no tool can have acted: with text
+- **The preflight** costs one small request (measured below in the PR: about 0.3-0.5 s) at most once per 10 minutes per key. It runs before the call, so a refusal there cannot duplicate anything. The only case left is the credit ending *during* a call that already ran a tool: that call is not repeated (it could act twice); its error comes back and the pause starts, so the next calls go straight to the subscription.
+- **When a refused call is repeated (without the preflight, or if it could not tell).** Only when no turn ran, so no tool can have acted: with text
   output, claude-credito gives the call its own `--session-id` and reads that session's transcript
   (`~/.claude/projects/*/<id>.jsonl`, or under `CLAUDE_CONFIG_DIR`): the refusal must be claude's own
   API error and there must be no real assistant message. With `--output-format json` or `stream-json`,

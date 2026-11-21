@@ -1,7 +1,7 @@
 ---
 name: api-credit
 description: Make a script, robot or scheduled job that calls `claude -p` use the plan's monthly API credit first, and the subscription when the API refuses, through the `claude-credito` command. Use when the user says "use the API credit for the robots", "run this script on the API credit", "claude-credito", "why did this job use the subscription?", "is the API credit being used?", "store the Console key", or when a `claude -p` job fails with "Credit balance is too low" or "Invalid API key".
-version: "0.2.0"
+version: "0.3.0"
 metadata:
   author: Lucas Saldanha Werneck <lucas@2olhares.com>
   tags: [api, credit, claude-p, automation, billing]
@@ -17,7 +17,7 @@ called `api-credit`.
 
 `claude-credito` takes the same arguments as `claude`. A call with `-p`/`--print` runs with the
 user's Console API key (the plan's monthly API credit). If the API refuses (no credit left, bad key),
-the API is paused for 6 hours for that key, and the same call runs again on the subscription when no turn ran yet
+the API is paused for 24 hours for that key, and the same call runs again on the subscription when no turn ran yet
 (if the credit ran out mid-call, after a tool may have acted, the error is returned instead). A call without `-p`
 goes straight to `claude`: an interactive session is not covered by the credit.
 
@@ -92,7 +92,7 @@ Keep a backup of any file you change, and test with one real call. Then run
 - If the Console organization has paid credits or auto-reload on, the API does not refuse when the
   monthly credit ends: it uses the paid balance. Tell the user to check the Console billing page.
 - `CLAUDE_CREDITO=off` in a job's environment sends that job to the subscription only.
-- `claude-credito --credit-resume` ends the 6-hour pauses (for example after the monthly credit renews).
+- `claude-credito --credit-resume` ends the 24-hour pauses (for example after the monthly credit renews).
 
 ## Examples
 
@@ -100,11 +100,11 @@ Keep a backup of any file you change, and test with one real call. Then run
   calls `claude`, point it at `claude-credito` (or put the shim first on its PATH), run one real call, then show
   the `api rc=0` line from the log.
 - "Is the API credit being used?": run `claude-credito --credit-status` and read the log lines:
-  `api rc=0` means the credit paid for the call, `subscription (paused)` means the API is paused for 6 hours.
+  `api rc=0` means the credit paid for the call, `subscription (paused)` means the API is paused for 24 hours.
 - "Store my Console key": tell the user to run `claude-credito --credit-store-key` in their own terminal
   (hidden input, macOS Keychain); the key never passes through the chat.
 - A `claude -p` job failed with "Credit balance is too low": the log shows `API REFUSED (...)` followed by
-  `subscription rc=0`; explain the 6-hour pause, and offer `claude-credito --credit-resume` after the credit renews.
+  `subscription rc=0`; explain the 24-hour pause, and offer `claude-credito --credit-resume` after the credit renews.
 
 ## Prerequisites
 
@@ -122,4 +122,4 @@ Keep a backup of any file you change, and test with one real call. Then run
 
 - Run `claude-credito --credit-status` first: key stored or not, API paused or not, last log lines.
 - Log file: `~/Library/Logs/claude-credito.log` on macOS (one line per call, no prompt, no key).
-- `subscription (paused)` in the log: the API refused less than 6 hours ago; `claude-credito --credit-resume` ends the pause.
+- `subscription (paused)` in the log: the API refused less than 24 hours ago; `claude-credito --credit-resume` ends the pause.

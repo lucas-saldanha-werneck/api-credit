@@ -16,7 +16,13 @@
 # How it decides:
 #   1. No -p/--print, CLAUDE_CREDITO=off, or ANTHROPIC_API_KEY already set by the caller -> plain claude.
 #   2. No key stored -> subscription.
-#   3. Paused (the API refused this key less than CLAUDE_CREDITO_PAUSE_S ago, default 6 h) -> subscription.
+#   3. Paused (the API refused this key less than CLAUDE_CREDITO_PAUSE_S ago, default 24 h) -> subscription.
+#      When the pause ends, the next call checks the API again (step 3b): credit back -> API again by itself;
+#      still refused -> a new pause, subscription, no error for the caller. So: once a day.
+#   3b. Preflight: before the real call, 1 request (1 token, haiku) to the API with the key. Refused
+#      (credit/key) -> pause + subscription at once: nothing ran on the API, so nothing is repeated, with or
+#      without tools or a transcript. OK is remembered CLAUDE_CREDITO_PREFLIGHT_S seconds (default 600).
+#      Network error, timeout, 429, 5xx: not a refusal, the call goes on to step 4.
 #   4. Otherwise it runs with the key. If the API refuses it ("Credit balance is too low", "Invalid API key"
 #      or another billing/key error, read from claude's error channel, not from the answer), it starts the
 #      pause. It runs the call again on the subscription only when it can prove no turn ran (no tool could
@@ -30,13 +36,16 @@
 #   CLAUDE_CREDITO_KEY            the key itself (default: the stored one)
 #   CLAUDE_CREDITO_KEY_COMMAND    a command that prints the key; --credit-store-key uses it instead of asking
 #   CLAUDE_CREDITO_KEYCHAIN=off   do not use the macOS Keychain (use the key file)
-#   CLAUDE_CREDITO_PAUSE_S        seconds to stay on the subscription after a refusal (default 21600)
+#   CLAUDE_CREDITO_PAUSE_S        seconds to stay on the subscription after a refusal (default 86400 = the API is
+#                                 checked once a day)
+#   CLAUDE_CREDITO_PREFLIGHT=off  skip the preflight       CLAUDE_CREDITO_PREFLIGHT_S  cache of an OK (default 600)
+#   CLAUDE_CREDITO_PREFLIGHT_MODEL  model of the 1-token check (default claude-haiku-5-5)
 #   CLAUDE_CREDITO_LOG            log file      CLAUDE_CREDITO_STATE   folder of the pause files
 #   CLAUDE_CREDITO_CONFIG         config file
 # PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
 
 set -u
-VERSION="0.2.0"
+VERSION="0.3.0"
 SELF="${BASH_SOURCE[0]}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
 CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"
@@ -58,8 +67,11 @@ if [[ -n "${CLAUDE_CREDITO_LOG:-}" ]]; then LOG="$CLAUDE_CREDITO_LOG"
 elif [[ -d "$HOME/Library/Logs" ]]; then LOG="$HOME/Library/Logs/claude-credito.log"
 else LOG="$STATE/claude-credito.log"; fi
 PAUSE=""   # set per key below: $STATE/paused-<hash of the key>
-PAUSE_S="${CLAUDE_CREDITO_PAUSE_S:-21600}"
-[[ "$PAUSE_S" =~ ^[0-9]+$ ]] || PAUSE_S=21600
+PAUSE_S="${CLAUDE_CREDITO_PAUSE_S:-86400}"
+[[ "$PAUSE_S" =~ ^[0-9]+$ ]] || PAUSE_S=86400
+PREFLIGHT_S="${CLAUDE_CREDITO_PREFLIGHT_S:-600}"
+[[ "$PREFLIGHT_S" =~ ^[0-9]+$ ]] || PREFLIGHT_S=600
+PREFLIGHT_MODEL="${CLAUDE_CREDITO_PREFLIGHT_MODEL:-claude-haiku-5-5}"
 KEY_FILE="$CONF_DIR/key"
 KC_SERVICE="claude-credito"
 KC_ACCOUNT="console-key"
@@ -148,7 +160,7 @@ paused() {
 
 case "${1:-}" in
   --credit-help)
-    sed -n '2,34p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    sed -n '2,45p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
   --credit-version)
     echo "claude-credito $VERSION"; exit 0 ;;
   --credit-status|--credito-status)
@@ -210,6 +222,36 @@ fi
 PAUSE="$(pause_file "$KEY")"
 if paused; then
   log "subscription (paused)"
+  exec "$REAL" "$@"
+fi
+
+# 3b. Preflight: ask the API for 1 token before the real call. A credit/key refusal here means nothing
+# has run yet, so the call goes straight to the subscription (nothing to repeat, no tool to run twice).
+# A good answer is remembered for PREFLIGHT_S seconds. A network error, timeout, 429 or 5xx is not a
+# refusal: the call goes on as it would without a preflight.
+preflight_refused() {
+  [[ "${CLAUDE_CREDITO_PREFLIGHT:-on}" == "off" ]] && return 1
+  local okf="$STATE/preflight-ok-$(key_id "$KEY")" body code
+  if (( PREFLIGHT_S > 0 )) && [[ -f "$okf" ]] && (( $(date +%s) - $(mtime "$okf") < PREFLIGHT_S )); then return 1; fi
+  body="$(mktemp "${TMPDIR:-/tmp}/claude-credito-pf.XXXXXX")" || return 1
+  # the key goes to curl on stdin (-K -), never on the command line
+  code="$(printf 'header = "x-api-key: %s"\n' "$KEY" | "${CLAUDE_CREDITO_CURL:-curl}" -sS -K - --max-time "${CLAUDE_CREDITO_PREFLIGHT_TIMEOUT:-10}" \
+    -o "$body" -w '%{http_code}' https://api.anthropic.com/v1/messages \
+    -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
+    -d '{"model":"'"$PREFLIGHT_MODEL"'","max_tokens":1,"messages":[{"role":"user","content":"."}]}' 2>/dev/null)"
+  local rc=1
+  if [[ "$code" =~ ^(400|401|402|403)$ ]] && grep -qiE "$REFUSED_RE" "$body" 2>/dev/null; then
+    PF_WHY="$(grep -oiE "$REFUSED_RE" "$body" | head -n 1)"; rc=0
+  elif [[ "$code" == 200 ]] && (( PREFLIGHT_S > 0 )); then
+    mkdir -p "$STATE" 2>/dev/null; : > "$okf"
+  fi
+  rm -f "$body"
+  return $rc
+}
+PF_WHY=""
+if preflight_refused; then
+  mkdir -p "$STATE" 2>/dev/null; : > "$PAUSE"; rm -f "$STATE/preflight-ok-$(key_id "$KEY")"
+  log "API REFUSED by preflight ($PF_WHY); no call ran on the API; subscription; API paused ${PAUSE_S}s"
   exec "$REAL" "$@"
 fi
 

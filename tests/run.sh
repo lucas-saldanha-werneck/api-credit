@@ -16,7 +16,7 @@ check() { # name, got, want
 # Settings from the developer's shell must not reach the tests.
 for v in $(env | sed -n 's/^\(CLAUDE_CREDITO[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
 unset ANTHROPIC_API_KEY XDG_CONFIG_HOME XDG_STATE_HOME
-export HOME="$W/home" FAKE_DIR="$W" CLAUDE_CREDITO_KEYCHAIN=off
+export HOME="$W/home" FAKE_DIR="$W" CLAUDE_CREDITO_KEYCHAIN=off CLAUDE_CREDITO_PREFLIGHT=off   # preflight has its own section, with a fake curl
 mkdir -p "$HOME" "$W/fakebin" "$W/work"
 export PATH="$W/fakebin:/usr/bin:/bin"
 CC="$R/bin/claude-credito"
@@ -24,6 +24,7 @@ PRE="sk-ant-"; GOOD="${PRE}test-good"; LOW="${PRE}test-low"; MIDLOW="${PRE}test-
 LOG="$HOME/.local/state/claude-credito/claude-credito.log"
 STATE_DIR="$HOME/.local/state/claude-credito"
 PAUSE="$STATE_DIR/paused-*"   # one pause file per key (a glob: test with paused_any)
+mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
 paused_any() { ls $PAUSE >/dev/null 2>&1; }
 
 cat > "$W/fakebin/claude" <<'EOF'
@@ -200,6 +201,84 @@ check "--tools '' with --mcp-config: not repeated" "$OUT|$(calls)" "Credit balan
 reset
 OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --strict-mcp-config --tools "Bash" --no-session-persistence 2>/dev/null)
 check "tools allowed + --no-session-persistence: no proof, not repeated" "$OUT|$(calls)" "Credit balance is too low|1"
+
+echo "== preflight (fake curl: no network)"
+cat > "$W/fakebin/fakecurl" <<'EOF'
+#!/bin/bash
+# fake curl: reads the key from the config on stdin (-K -), like the real one; answers by the key.
+cfg="$(cat)"; out=""; prev=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+echo "args=$*" >> "$FAKE_DIR/curlcalls"
+case "$*" in *sk-ant-*) echo "KEY ON COMMAND LINE" >> "$FAKE_DIR/curlcalls" ;; esac
+[ -n "${FAKE_CURL_NET:-}" ] && exit 6
+case "$cfg" in
+  *low*)   echo '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}' > "$out"; printf 400 ;;
+  *wrong*) echo '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}' > "$out"; printf 401 ;;
+  *429*)   echo '{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}' > "$out"; printf 429 ;;
+  *)       echo '{"type":"message"}' > "$out"; printf 200 ;;
+esac
+EOF
+chmod +x "$W/fakebin/fakecurl"
+export CLAUDE_CREDITO_CURL="$W/fakebin/fakecurl" CLAUDE_CREDITO_PREFLIGHT=on
+ccalls() { if [ -f "$W/curlcalls" ]; then grep -c '^args=' "$W/curlcalls"; else echo 0; fi; }
+preset() { reset; rm -f "$W/curlcalls" "$STATE_DIR"/preflight-ok-*; }
+preset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
+check "preflight refuses: straight to the subscription, the API never ran the real call" "$OUT|$(calls)|$(cut -d' ' -f1 "$W/calls")|$(ccalls)" "sub-ok [q]|1|key=none|1"
+paused_any && ok "preflight refusal: pause written" || bad "no pause file"
+grep -q "API REFUSED by preflight" "$LOG" && ok "log says preflight" || bad "log: $(cat "$LOG")"
+grep -q "KEY ON COMMAND LINE" "$W/curlcalls" && bad "key shown on the curl command line" || ok "key is not on the curl command line"
+grep -q "claude-haiku-5-5" "$W/curlcalls" && grep -q '"max_tokens":1' "$W/curlcalls" && ok "preflight asks haiku for 1 token" || bad "$(cat "$W/curlcalls")"
+preset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$WRONG" bash "$CC" -p 2>/dev/null)
+check "preflight: invalid key (401) also goes to the subscription" "$OUT|$(calls)" "sub-ok [q]|1"
+preset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --tools Bash --no-session-persistence 2>"$W/err"); rc=$?
+check "tools + --no-session-persistence + credit gone: subscription, no error for the caller" "$OUT|$rc|$(cat "$W/err")|$(calls)" "sub-ok [q]|0|sub-err|1"
+preset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --output-format json --tools Bash --no-session-persistence 2>/dev/null)
+check "same, json output" "$OUT|$(calls)" "sub-ok [q]|1"
+preset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
+check "preflight ok: the real call goes to the API" "$OUT|$(calls)|$(ccalls)" "api-ok [q]|1|1"
+paused_any && bad "pause after an OK" || ok "no pause after an OK"
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
+check "preflight OK is cached: second call does not ask again" "$OUT|$(calls)|$(ccalls)" "api-ok [q]|2|1"
+OUT=$(echo q | CLAUDE_CREDITO_PREFLIGHT_S=0 CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
+check "CLAUDE_CREDITO_PREFLIGHT_S=0: asks every time" "$OUT|$(ccalls)" "api-ok [q]|2"
+preset
+OUT=$(echo q | FAKE_CURL_NET=1 CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
+check "preflight network error: not a refusal, runs on the API as before" "$OUT|$(calls)" "api-ok [q]|1"
+ls "$STATE_DIR"/preflight-ok-* >/dev/null 2>&1 && bad "a network error was cached as OK" || ok "network error is not cached"
+preset
+OUT=$(echo q | FAKE_CURL_NET=1 CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
+check "preflight network error + credit gone: old behaviour (repeated, proven no turn)" "$OUT|$(calls)" "sub-ok [q]|2"
+preset
+OUT=$(echo q | FAKE_CURL_NET=1 CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --tools Bash --no-session-persistence 2>/dev/null)
+check "preflight network error + tools + no transcript: old behaviour (not repeated)" "$OUT|$(calls)" "Credit balance is too low|1"
+preset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="${PRE}test-429-good" bash "$CC" -p 2>/dev/null)
+check "preflight 429: not a refusal" "$OUT|$(calls)" "api-ok [q]|1"
+preset
+OUT=$(echo q | CLAUDE_CREDITO_PREFLIGHT=off CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
+check "CLAUDE_CREDITO_PREFLIGHT=off: no preflight" "$OUT|$(ccalls)" "api-ok [q]|0"
+
+echo "== once a day: pause over, the preflight decides"
+preset
+echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p >/dev/null 2>&1
+check "paused: no preflight, no API" "$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)|$(ccalls)|$(calls)" "sub-ok [q]|1|2"
+touch -t 202001010000 $PAUSE   # the pause is old
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
+check "pause over, credit still gone: one preflight, subscription, pause renewed" "$OUT|$(ccalls)|$(( $(date +%s) - $(mtime_of $PAUSE) < 60 ))" "sub-ok [q]|2|1"
+preset
+echo q | CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p >/dev/null 2>&1
+GP=$(ls "$STATE_DIR"/preflight-ok-* | sed 's/preflight-ok-/paused-/'); : > "$GP"; touch -t 202001010000 "$GP"; rm -f "$STATE_DIR"/preflight-ok-*
+rm -f "$W/curlcalls" "$W/calls"
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$GOOD" bash "$CC" -p 2>/dev/null)
+check "pause over, credit back: back to the API by itself" "$OUT|$(calls)|$(ccalls)" "api-ok [q]|1|1"
+[ -f "$GP" ] && bad "pause file left after the credit came back" || ok "old pause removed"
+check "default pause is 24 h" "$(grep -c 'PAUSE_S:-86400' "$CC")" "1"
+unset CLAUDE_CREDITO_CURL; export CLAUDE_CREDITO_PREFLIGHT=off
 
 echo "== audit round 2"
 reset
