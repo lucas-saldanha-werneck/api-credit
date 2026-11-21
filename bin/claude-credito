@@ -246,8 +246,15 @@ fi
 
 # Output format, and whether the caller manages the session itself (then no session id of our own).
 fmt=text; prev=""; own_session=0
+no_tools=0; strict_mcp=0; has_mcp=0
 for a in "$@"; do
   [[ "$prev" == "--output-format" ]] && fmt="$a"
+  [[ "$prev" == "--tools" && -z "$a" ]] && no_tools=1
+  case "$a" in
+    --tools=) no_tools=1 ;;
+    --strict-mcp-config) strict_mcp=1 ;;
+    --mcp-config|--mcp-config=*) has_mcp=1 ;;
+  esac
   case "$a" in
     --output-format=*) fmt="${a#*=}" ;;
     -c|-r|--continue|--resume|--resume=*|--session-id|--session-id=*|--fork-session|--no-session-persistence|\
@@ -308,11 +315,18 @@ elif [[ -n "$SID" ]]; then
     [[ -n "$why" && "$(real_turns "$tf")" == 0 ]] && proven=1
   fi
 fi
+# `--tools ""` (no built-in tool) with `--strict-mcp-config` and no `--mcp-config` (no MCP tool): claude has
+# no tool it could run, so a refused call cannot have acted, with or without a transcript (this is how
+# callers with --no-session-persistence still get the repeat). A refusal is recognised as below, by its
+# text in a short failed reply (exit code not 0).
+no_tool_possible=0
+(( no_tools && strict_mcp && ! has_mcp )) && no_tool_possible=1
 if (( ! known )) && (( rc != 0 )); then
   # no structured answer (caller's own session, no transcript): a short failed reply with a refusal
   # text only pauses the API; the call is not repeated
   size=$(( $(wc -c < "$T/out") + $(wc -c < "$T/err") ))
   (( size < 6000 )) && why="$(grep -ohE "$REFUSED_RE" "$T/out" "$T/err" 2>/dev/null | head -n 1)"
+  [[ -n "$why" ]] && (( no_tool_possible )) && proven=1
 fi
 
 if [[ -n "$why" ]]; then

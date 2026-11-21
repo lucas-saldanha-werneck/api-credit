@@ -182,6 +182,25 @@ reset
 OUT=$(echo q | CLAUDE_CONFIG_DIR="$W/cfgdir" CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p 2>/dev/null)
 check "transcript found under CLAUDE_CONFIG_DIR" "$OUT|$(calls)" "sub-ok [q]|2"
 
+# no tool can run (--tools "" + --strict-mcp-config): the refusal is repeated even with --no-session-persistence
+reset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --strict-mcp-config --tools "" --no-session-persistence 2>/dev/null)
+check "--tools '' + --no-session-persistence: repeated on the subscription" "$OUT|$(calls)" "sub-ok [q]|2"
+grep -q "^key=none stdin=\[q\] args=-p --strict-mcp-config --tools  --no-session-persistence$" "$W/calls" && ok "--tools '': subscription call has the same arguments" || bad "$(cat "$W/calls")"
+paused_any && ok "--tools '': API paused" || bad "no pause file"
+reset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --strict-mcp-config --tools= --no-session-persistence 2>/dev/null)
+check "--tools= form: repeated" "$OUT|$(calls)" "sub-ok [q]|2"
+reset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --tools "" --no-session-persistence 2>/dev/null)
+check "--tools '' but MCP not locked: not repeated" "$OUT|$(calls)" "Credit balance is too low|1"
+reset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --strict-mcp-config --mcp-config x.json --tools "" --no-session-persistence 2>/dev/null)
+check "--tools '' with --mcp-config: not repeated" "$OUT|$(calls)" "Credit balance is too low|1"
+reset
+OUT=$(echo q | CLAUDE_CREDITO_KEY="$LOW" bash "$CC" -p --strict-mcp-config --tools "Bash" --no-session-persistence 2>/dev/null)
+check "tools allowed + --no-session-persistence: no proof, not repeated" "$OUT|$(calls)" "Credit balance is too low|1"
+
 echo "== audit round 2"
 reset
 # AC-01: killing the wrapper also stops the claude it started

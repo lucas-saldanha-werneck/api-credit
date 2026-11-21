@@ -145,6 +145,9 @@ Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the p
   0) shorter than 6000 bytes with one of the refusal texts counts as a refusal. The transcript is read
   field by field with `jq` (or `python3`); with neither, there is no proof and the call is not repeated.
   If the copy of stdin could not be written whole, the call is not repeated either.
+  One more proof: a call with `--tools ""` and `--strict-mcp-config` (and no `--mcp-config`) has no
+  tool at all, so it cannot have acted. Its refusal (short failed reply with a refusal text) is repeated
+  on the subscription even with `--no-session-persistence` or `--resume`, which leave no transcript.
 
 ## Tests
 

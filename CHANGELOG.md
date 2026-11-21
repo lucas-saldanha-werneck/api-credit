@@ -2,6 +2,9 @@
 
 All notable changes to this project are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+- A refused call with `--tools ""` + `--strict-mcp-config` (no tool can run) is repeated on the subscription even with `--no-session-persistence`, where there is no transcript to prove it.
+
 ## [0.2.0] - 2026-11-13
 - Renamed the skill to `api-credit` (the old name broke the skill schema). The `claude-credito` command keeps its name.
 - Skill frontmatter has `version` and `tags`; the skill has Purpose, Prerequisites, Limitations and Troubleshooting sections; the description is in the third person.
