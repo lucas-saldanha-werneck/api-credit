@@ -45,6 +45,7 @@ if named_fifo; then cat > /dev/null; sleep 5; echo "fake claude: stuck on a name
 if [ -n "${FAKE_STDIN_GIVEUP:-}" ]; then in=""; IFS= read -r -t 1 in || true; else in="$(cat)"; fi
 [ -n "${FAKE_SLEEP:-}" ] && { echo $$ > "$FAKE_DIR/pid"; exec sleep "$FAKE_SLEEP"; }
 echo "key=${ANTHROPIC_API_KEY:-none} stdin=[$in] args=$*" >> "$FAKE_DIR/calls"
+echo "${CLAUDE_CODE_OAUTH_TOKEN:-none}" >> "$FAKE_DIR/toks"
 sid=""; fmt=text; prev=""
 for a in "$@"; do
   case "$prev" in --session-id) sid="$a" ;; --output-format) fmt="$a" ;; esac
@@ -343,6 +344,14 @@ OUT=$(PATH="/usr/bin:/bin" bash "$CC" -p x </dev/null 2>&1); check "no claude an
 bash "$CC" --credit-help | grep -q "^Usage:" && ok "--credit-help prints the usage" || bad "no usage"
 PV=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$R/.claude-plugin/plugin.json")
 check "--credit-version matches plugin.json" "$(bash "$CC" --credit-version)" "claude-credito $PV"
+
+echo "== subscription token"
+reset; rm -f "$W/toks"
+echo q | bash "$CC" -p >/dev/null 2>&1; check "no token stored, none set: the subscription call gets none" "$(tail -n 1 "$W/toks")" "none"
+echo q | CLAUDE_CODE_OAUTH_TOKEN="${PRE}oat-caller" bash "$CC" -p >/dev/null 2>&1; check "a token the caller set is kept" "$(tail -n 1 "$W/toks")" "${PRE}oat-caller"
+OUT=$(CLAUDE_CREDITO_OAUTH_COMMAND="echo x" bash "$CC" --credit-store-oauth 2>&1); rc=$?
+check "--credit-store-oauth without the Keychain refuses" "$rc" "1"
+bash "$CC" --credit-status 2>&1 | grep -q "subscription token: NOT stored" && ok "--credit-status says the token is not stored" || bad "status has no token line"
 
 echo "== install.sh and the shim"
 reset

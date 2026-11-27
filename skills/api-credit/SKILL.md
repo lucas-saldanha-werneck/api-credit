@@ -1,7 +1,7 @@
 ---
 name: api-credit
 description: Make a script, robot or scheduled job that calls `claude -p` use the plan's monthly API credit first, and the subscription when the API refuses, through the `claude-credito` command. Use when the user says "use the API credit for the robots", "run this script on the API credit", "claude-credito", "why did this job use the subscription?", "is the API credit being used?", "store the Console key", or when a `claude -p` job fails with "Credit balance is too low" or "Invalid API key".
-version: "0.3.0"
+version: "0.4.0"
 metadata:
   author: Lucas Saldanha Werneck <lucas@2olhares.com>
   tags: [api, credit, claude-p, automation, billing]

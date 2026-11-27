@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-27
+- Long-lived subscription token: `claude-credito --credit-store-oauth` copies a token made by `claude setup-token` (printed by `CLAUDE_CREDITO_OAUTH_COMMAND`) to the macOS Keychain. Every `-p` call that goes to the subscription (no key, API paused, API refused, `CLAUDE_CREDITO=off`) then runs with `CLAUDE_CODE_OAUTH_TOKEN`, so scripts do not depend on the interactive login expiring. A token the caller already set is kept. `CLAUDE_CREDITO_OAUTH=off` turns it off.
+- That token has no claude.ai connectors and no Remote Control, and `claude --bare` ignores it. Calls without `-p` never get it.
+- `--credit-status` shows whether the token is stored (never the token). The log marks those calls with `[1y token]`.
+
 ## [0.3.0] - 2026-11-21
 - Preflight: before a real call, a 1-token request (`claude-haiku-5-5`) checks the key. A credit/key refusal there sends the call straight to the subscription, with no error for the caller and nothing to repeat (works with tools, `--no-session-persistence`, any output format). An OK is cached `CLAUDE_CREDITO_PREFLIGHT_S` seconds (default 600). Network errors, 429 and 5xx do not count as a refusal. `CLAUDE_CREDITO_PREFLIGHT=off` disables it.
 - Default pause is now 24 h (`CLAUDE_CREDITO_PAUSE_S=86400`): the API is checked once a day, and used again by itself when the credit is back.

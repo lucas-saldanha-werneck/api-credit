@@ -10,6 +10,7 @@
 #   claude-credito -p [claude args...]   same as claude: same stdout, stderr and exit code
 #   claude-credito --credit-status       key, pause, the claude it runs, and the last log lines
 #   claude-credito --credit-store-key    store the Console key (macOS Keychain, or a 600 file elsewhere)
+#   claude-credito --credit-store-oauth  store a long-lived subscription token (claude setup-token), macOS Keychain
 #   claude-credito --credit-resume       end the pause now
 #   claude-credito --credit-help         this text
 #
@@ -42,10 +43,17 @@
 #   CLAUDE_CREDITO_PREFLIGHT_MODEL  model of the 1-token check (default claude-haiku-5-5)
 #   CLAUDE_CREDITO_LOG            log file      CLAUDE_CREDITO_STATE   folder of the pause files
 #   CLAUDE_CREDITO_CONFIG         config file
+#   CLAUDE_CREDITO_OAUTH=off      on the subscription, do not inject the stored long-lived token (setup-token)
+#   CLAUDE_CREDITO_OAUTH_COMMAND  a command that prints the setup-token token; --credit-store-oauth copies it
+#                                 to the Keychain (service claude-credito, account oauth-token). With it stored,
+#                                 every -p call that goes to the subscription runs with CLAUDE_CODE_OAUTH_TOKEN
+#                                 (unless the caller already set one), so robots do not depend on the
+#                                 interactive login. Note: that token has no claude.ai connectors and no
+#                                 Remote Control; --bare ignores it.
 # PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
 
 set -u
-VERSION="0.3.0"
+VERSION="0.4.0"
 SELF="${BASH_SOURCE[0]}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
 CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"
@@ -75,12 +83,14 @@ PREFLIGHT_MODEL="${CLAUDE_CREDITO_PREFLIGHT_MODEL:-claude-haiku-5-5}"
 KEY_FILE="$CONF_DIR/key"
 KC_SERVICE="claude-credito"
 KC_ACCOUNT="console-key"
+KC_OAUTH_ACCOUNT="oauth-token"
+SUBTAG=""
 REFUSED_RE='Credit balance is too low|Invalid API key|invalid x-api-key|billing_error|authentication_error|permission_error|API key (is|has been) (expired|revoked|disabled)'
 NOTICE_RE='^⚠ claude\.ai connectors are disabled because ANTHROPIC_API_KEY'
 
 log() {
   mkdir -p "$(dirname "$LOG")" 2>/dev/null
-  printf '%s %s (%s)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" "${PWD/#$HOME/~}" >> "$LOG" 2>/dev/null || true
+  printf '%s %s%s (%s)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" "$SUBTAG" "${PWD/#$HOME/~}" >> "$LOG" 2>/dev/null || true
 }
 
 # Number of assistant messages in a transcript whose .message.model is not "<synthetic>" (claude's own
@@ -136,6 +146,20 @@ stored_key() {
   printf '%s' "$k"
 }
 
+# Long-lived subscription token (claude setup-token), kept in the Keychain. Never printed.
+stored_oauth() {
+  local k=""
+  if use_keychain; then k="$(/usr/bin/security find-generic-password -s "$KC_SERVICE" -a "$KC_OAUTH_ACCOUNT" -w 2>/dev/null)"; fi
+  printf '%s' "$k"
+}
+# Called right before a -p call runs on the subscription: inject the stored token unless the caller set one.
+use_sub_token() {
+  [[ "${CLAUDE_CREDITO_OAUTH:-on}" == "off" ]] && return 0
+  [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && return 0
+  local t; t="$(stored_oauth)"
+  if [[ "$t" == sk-ant-oat01-* ]]; then export CLAUDE_CODE_OAUTH_TOKEN="$t"; SUBTAG=" [1y token]"; fi
+}
+
 # GNU stat first: on Linux `stat -f` means something else and prints text.
 mtime() {
   local m
@@ -172,6 +196,8 @@ case "${1:-}" in
       m="$(mtime "$PAUSE")"
       echo "pause: on since $(date -r "$m" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$m" '+%Y-%m-%d %H:%M'), lasts ${PAUSE_S}s"
     else echo "pause: off"; fi
+    t="$(stored_oauth)"
+    if [[ "$t" == sk-ant-oat01-* ]]; then echo "subscription token: stored (${#t} chars)$([[ "${CLAUDE_CREDITO_OAUTH:-on}" == off ]] && echo ', OFF by CLAUDE_CREDITO_OAUTH=off')"; else echo "subscription token: NOT stored (interactive login is used; run: claude-credito --credit-store-oauth)"; fi
     echo "claude: $(find_real || echo 'NOT FOUND (set CLAUDE_CREDITO_REAL)')"
     echo "log: $LOG"; tail -n 8 "$LOG" 2>/dev/null
     exit 0 ;;
@@ -196,6 +222,14 @@ case "${1:-}" in
     fi
     if [[ "$(stored_key)" == "$k" ]]; then echo "key stored (ends in …${k: -4})"; exit 0; fi
     echo "could not store the key" >&2; exit 1 ;;
+  --credit-store-oauth)
+    [[ -n "${CLAUDE_CREDITO_OAUTH_COMMAND:-}" ]] || { echo "set CLAUDE_CREDITO_OAUTH_COMMAND in $CONFIG" >&2; exit 1; }
+    use_keychain || { echo "needs the macOS Keychain" >&2; exit 1; }
+    k="$(bash -c "$CLAUDE_CREDITO_OAUTH_COMMAND" 2>/dev/null | tail -n 1)"; k="${k//[[:space:]]/}"
+    [[ "$k" == sk-ant-oat01-* ]] || { echo "that is not a setup-token token (sk-ant-oat01-...)" >&2; exit 1; }
+    printf 'add-generic-password -U -s %s -a %s -w %s\n' "$KC_SERVICE" "$KC_OAUTH_ACCOUNT" "$k" | /usr/bin/security -i >/dev/null 2>&1
+    if [[ "$(stored_oauth)" == "$k" ]]; then echo "subscription token stored (${#k} chars)"; exit 0; fi
+    echo "could not store the token" >&2; exit 1 ;;
   --credit-resume|--credito-despausar)
     rm -f "$STATE"/paused "$STATE"/paused-* && echo "pause ended"; exit 0 ;;
 esac
@@ -205,7 +239,11 @@ REAL="$(find_real)" || { echo "claude-credito: claude not found (install Claude 
 # 1. Only a call with no conversation uses the credit.
 headless=0
 for a in "$@"; do [[ "$a" == "-p" || "$a" == "--print" ]] && { headless=1; break; }; done
-if (( ! headless )) || [[ "${CLAUDE_CREDITO:-on}" == "off" ]] || [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+if (( ! headless )); then
+  exec "$REAL" "$@"
+fi
+if [[ "${CLAUDE_CREDITO:-on}" == "off" ]] || [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  [[ -z "${ANTHROPIC_API_KEY:-}" ]] && use_sub_token
   exec "$REAL" "$@"
 fi
 
@@ -213,6 +251,7 @@ fi
 KEY="${CLAUDE_CREDITO_KEY:-}"
 [[ "$KEY" == sk-ant-* ]] || KEY="$(stored_key)"
 if [[ "$KEY" != sk-ant-* ]]; then
+  use_sub_token
   log "subscription (no key stored; run: claude-credito --credit-store-key)"
   exec "$REAL" "$@"
 fi
@@ -221,6 +260,7 @@ fi
 # stop the others.
 PAUSE="$(pause_file "$KEY")"
 if paused; then
+  use_sub_token
   log "subscription (paused)"
   exec "$REAL" "$@"
 fi
@@ -251,12 +291,13 @@ preflight_refused() {
 PF_WHY=""
 if preflight_refused; then
   mkdir -p "$STATE" 2>/dev/null; : > "$PAUSE"; rm -f "$STATE/preflight-ok-$(key_id "$KEY")"
+  use_sub_token
   log "API REFUSED by preflight ($PF_WHY); no call ran on the API; subscription; API paused ${PAUSE_S}s"
   exec "$REAL" "$@"
 fi
 
 # 4. Run on the API, keeping a copy of stdin and the output so the call can be repeated on the subscription.
-T="$(mktemp -d "${TMPDIR:-/tmp}/claude-credito.XXXXXX")" || exec "$REAL" "$@"
+T="$(mktemp -d "${TMPDIR:-/tmp}/claude-credito.XXXXXX")" || { use_sub_token; exec "$REAL" "$@"; }
 CHILD=""; TEE=""; GOT_SIG=""
 trap '[[ -n "$TEE" ]] && kill "$TEE" 2>/dev/null; rm -rf "$T"' EXIT
 # claude runs in the background so that a TERM, INT or HUP sent to this wrapper (a caller's timeout)
@@ -376,6 +417,7 @@ if [[ -n "$why" ]]; then
   if (( proven && copy_ok )); then
     log "API REFUSED ($why, rc=$rc); the same call goes to the subscription; API paused ${PAUSE_S}s"
     rc=0
+    use_sub_token
     "$REAL" "$@" < "$COPY" &
     wait_child $! || rc=$?
     log "subscription rc=$rc"
