@@ -90,6 +90,27 @@ The plugin and its skill are called `api-credit` because Claude Code reserves na
 
 Requires `bash` and Claude Code (`claude`).
 
+## Subscription token (optional, macOS)
+
+The interactive login of `claude` expires after some weeks, and a script that calls `claude -p` stops
+working that day. To avoid it, make a long-lived token once and let this tool use it on the subscription:
+
+```
+claude setup-token                       # prints a token that starts with sk-ant-oat01-
+# put a command that prints it in ~/.config/claude-credito/config, for example:
+#   CLAUDE_CREDITO_OAUTH_COMMAND='op read "op://<vault>/<item>/<field>"'
+claude-credito --credit-store-oauth      # copies it to the Keychain (service claude-credito, account oauth-token)
+claude-credito --credit-status           # "subscription token: stored (N chars)"; the token is never printed
+```
+
+From then on every `-p` call that goes to the subscription (no key, API paused, API refused,
+`CLAUDE_CREDITO=off`) runs with `CLAUDE_CODE_OAUTH_TOKEN` set, unless the caller already set one. The log
+marks those calls with `[1y token]`. Set `CLAUDE_CREDITO_OAUTH=off` to go back to the interactive login.
+
+Limits, from the Claude Code documentation: this token has no claude.ai connectors and no Remote Control,
+and `claude --bare` ignores `CLAUDE_CODE_OAUTH_TOKEN`, so a `--bare` call needs an API key. A call without `-p`
+never gets the token. Keep the token out of the repo and out of shell history.
+
 ## Use it in a script
 
 - The script has a setting for the claude path: set it to `claude-credito`. In a launchd or cron job
@@ -115,6 +136,8 @@ that is already there.
 | `CLAUDE_CREDITO_REAL` | the first `claude` on PATH that is not this tool | The `claude` to run |
 | `CLAUDE_CREDITO_KEY` | the stored key | The key itself, for one call |
 | `CLAUDE_CREDITO_KEY_COMMAND` | empty | A command that prints the key (your password manager). `--credit-store-key` runs it instead of asking |
+| `CLAUDE_CREDITO_OAUTH_COMMAND` | empty | A command that prints a `claude setup-token` token. `--credit-store-oauth` runs it and stores the token in the Keychain |
+| `CLAUDE_CREDITO_OAUTH` | on | `off`: on the subscription, do not use the stored token |
 | `CLAUDE_CREDITO_KEYCHAIN` | on | `off`: keep the key in the key file, not in the macOS Keychain |
 | `CLAUDE_CREDITO_PAUSE_S` | `86400` | Seconds on the subscription after a refusal. When it ends, the next call checks the API again (preflight): credit back -> the API is used again by itself; still refused -> a new pause. So the API is checked once a day |
 | `CLAUDE_CREDITO_PREFLIGHT` | on | `off`: no preflight (back to the old behaviour: repeat only when proven) |
@@ -124,7 +147,7 @@ that is already there.
 | `CLAUDE_CREDITO_STATE` | `~/.local/state/claude-credito` | Folder of the pause files (one per key, named by a hash of the key) |
 | `CLAUDE_CREDITO_CONFIG` | `~/.config/claude-credito/config` | The config file |
 
-Commands: `--credit-status`, `--credit-store-key`, `--credit-resume` (ends the pause now),
+Commands: `--credit-status`, `--credit-store-key`, `--credit-store-oauth`, `--credit-resume` (ends the pause now),
 `--credit-help`, `--credit-version`.
 
 ## Limits
